@@ -334,4 +334,6 @@ This project is licensed under the MIT License. See the [LICENSE](LICENSE) file 
 - **Precompilation**: The precompilation option remains optional, as the wrapper script works with the current in-browser Babel setup.
 - **Deployment**: The dual-server setup (FastAPI + `serve`) is now the default for local development, but the deployment section offers a single-server option for production to simplify hosting.
 
-This updated `README.md` provides clear instructions for the new wrapper script and reflects the latest improvements to Xplora. Let me know if you need further adjustments!
+![Alt text](xplora2.png "Xplora Interface 2")
+![Alt text](xplora3.png "Xplora Interface 3")
+![Alt text](xplora4.png "Xplora Interface 4")
