@@ -1,0 +1,853 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>X Backup Explorer - Network Bubble Diagram</title>
+  <link rel="icon" type="image/x-icon" href="/public/favicon.ico">
+  <script src="https://cdn.jsdelivr.net/npm/react@18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.22.5/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/axios@1.4.0/dist/axios.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/d3@7.8.5/dist/d3.min.js"></script>
+  <script src="/public/lib/react-window.umd.min.js" onerror="console.error('Failed to load react-window script'); window.ReactWindowLoadError = true;"></script>
+  <link href="/public/output.css" rel="stylesheet">
+  <style>
+    /* Custom styles for the dual-thumb slider */
+    .range-slider-container {
+      position: relative;
+      width: 100%;
+      height: 30px;
+      margin: 10px 0;
+      display: flex;
+      align-items: center;
+    }
+    .range-slider-container input[type="range"] {
+      position: absolute;
+      width: 100%;
+      margin: 0;
+      pointer-events: none;
+      -webkit-appearance: none;
+      appearance: none;
+      background: transparent;
+    }
+    .range-slider-container input[type="range"]::-webkit-slider-runnable-track {
+      height: 4px;
+      background: #4a5568; /* Darker track for dark theme */
+      border-radius: 2px;
+    }
+    .range-slider-container input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 16px;
+      height: 16px;
+      background: #3b82f6;
+      border-radius: 50%;
+      cursor: pointer;
+      pointer-events: auto;
+      margin-top: -6px;
+    }
+    .range-slider-container input[type="range"]::-moz-range-track {
+      height: 4px;
+      background: #4a5568;
+      border-radius: 2px;
+    }
+    .range-slider-container input[type="range"]::-moz-range-thumb {
+      width: 16px;
+      height: 16px;
+      background: #3b82f6;
+      border-radius: 50%;
+      cursor: pointer;
+      pointer-events: auto;
+    }
+    .range-slider-container .range-fill {
+      position: absolute;
+      height: 4px;
+      background: #3b82f6;
+      border-radius: 2px;
+      pointer-events: none;
+      top: 50%;
+      transform: translateY(-50%);
+    }
+    /* Enforce strict square cells in the grid */
+    .grid-cell {
+      overflow: hidden;
+      box-sizing: border-box;
+      aspect-ratio: 1 / 1 !important;
+      display: flex;
+      flex-direction: column;
+    }
+    .grid-cell img {
+      width: 100% !important;
+      height: 60% !important;
+      object-fit: cover !important;
+      flex-shrink: 0;
+    }
+    .grid-cell p {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .grid-cell div {
+      flex-shrink: 0;
+    }
+    /* Custom toggle switch styles */
+    .toggle-switch {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .toggle-switch input[type="checkbox"] {
+      display: none;
+    }
+    .toggle-switch label {
+      position: relative;
+      display: inline-block;
+      width: 40px;
+      height: 20px;
+    }
+    .toggle-switch label .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: #4a5568; /* Darker slider for dark theme */
+      transition: 0.4s;
+      border-radius: 20px;
+    }
+    .toggle-switch label .slider:before {
+      position: absolute;
+      content: "";
+      height: 16px;
+      width: 16px;
+      left: 2px;
+      bottom: 2px;
+      background-color: white;
+      transition: 0.4s;
+      border-radius: 50%;
+    }
+    .toggle-switch input:checked + label .slider {
+      background-color: #3b82f6;
+    }
+    .toggle-switch input:checked + label .slider:before {
+      transform: translateX(20px);
+    }
+    .toggle-switch span {
+      font-size: 14px;
+      color: #e5e7eb; /* Light text for dark theme */
+    }
+    /* Filter toggle styles */
+    .filter-toggle {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .filter-toggle input[type="checkbox"] {
+      display: none;
+    }
+    .filter-toggle label {
+      position: relative;
+      display: inline-block;
+      width: 40px;
+      height: 20px;
+    }
+    .filter-toggle label .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: #4a5568; /* Darker slider for dark theme */
+      transition: 0.4s;
+      border-radius: 20px;
+    }
+    .filter-toggle label .slider:before {
+      position: absolute;
+      content: "";
+      height: 16px;
+      width: 16px;
+      left: 2px;
+      bottom: 2px;
+      background-color: white;
+      transition: 0.4s;
+      border-radius: 50%;
+    }
+    .filter-toggle input:checked + label .slider {
+      background-color: #3b82f6;
+    }
+    .filter-toggle input:checked + label .slider:before {
+      transform: translateX(20px);
+    }
+    .filter-toggle span {
+      font-size: 14px;
+      color: #e5e7eb; /* Light text for dark theme */
+    }
+    /* Ensure SVG canvas has a dark background */
+    svg {
+      background-color: #111827; /* Tailwind's bg-gray-900 */
+    }
+    /* Ensure grid layout container has a dark background */
+    .grid-container {
+      background-color: #111827; /* Tailwind's bg-gray-900 */
+    }
+    /* Fallback for input fields to ensure dark background */
+    input, select {
+      background-color: #374151 !important; /* Tailwind's bg-gray-700 */
+    }
+  </style>
+</head>
+<body class="font-sans overflow-hidden transition-colors duration-300 bg-gray-900">
+  <div id="root"></div>
+  <script type="text/babel" defer>
+    const { useState, useEffect, useMemo, useRef } = React;
+
+    // Check if react-window loaded correctly
+    if (window.ReactWindowLoadError || !window.ReactWindow) {
+      const errorMsg = window.ReactWindowLoadError
+        ? 'Failed to load react-window script. Please ensure public/lib/react-window.umd.min.js exists, is accessible, and is a valid JavaScript file.'
+        : 'react-window failed to load. Please ensure public/lib/react-window.umd.min.js exists and is accessible.';
+      console.error(errorMsg);
+      const root = document.getElementById('root');
+      root.innerHTML = `<div class="text-red-500 text-center p-4">Error: ${errorMsg}</div>`;
+      throw new Error('react-window not loaded');
+    }
+
+    const { FixedSizeGrid } = window.ReactWindow;
+
+    const App = () => {
+      const [file, setFile] = useState(null);
+      const [tweets, setTweets] = useState([]);
+      const [filteredTweets, setFilteredTweets] = useState([]);
+      const [query, setQuery] = useState('');
+      const [selectedInterest, setSelectedInterest] = useState('');
+      const [loading, setLoading] = useState(false);
+      const [rendering, setRendering] = useState(false);
+      const [uploadProgress, setUploadProgress] = useState(0);
+      const [displayProgress, setDisplayProgress] = useState(0);
+      const [error, setError] = useState('');
+      const [analysis, setAnalysis] = useState({ topics: [], sentiments: [], clusters: [], interests: [] });
+      const [selectedTweet, setSelectedTweet] = useState(null);
+      const [layout, setLayout] = useState(localStorage.getItem('layout') || 'bubble');
+      const [scale, setScale] = useState(parseFloat(localStorage.getItem('scale')) || 1.0);
+      const [showImages, setShowImages] = useState(false);
+      const [showVideos, setShowVideos] = useState(false);
+      const [showLinks, setShowLinks] = useState(false);
+      const svgRef = useRef(null);
+      const zoomTransformRef = useRef(d3.zoomIdentity);
+      const [dimensions, setDimensions] = useState({ width: window.innerWidth, height: window.innerHeight });
+      const [dateRange, setDateRange] = useState({ start: null, end: null });
+      const [dateLimits, setDateLimits] = useState({ min: null, max: null });
+      const [zoomLevel, setZoomLevel] = useState(1);
+      const fileInputRef = useRef(null);
+
+      // Smooth progress update effect
+      useEffect(() => {
+        if (!loading) {
+          setDisplayProgress(0);
+          return;
+        }
+        if (uploadProgress === 0) return;
+
+        const interval = setInterval(() => {
+          setDisplayProgress(prev => {
+            if (prev >= uploadProgress) {
+              clearInterval(interval);
+              return prev;
+            }
+            const next = Math.min(prev + 1, uploadProgress);
+            return next;
+          });
+        }, 50);
+
+        return () => clearInterval(interval);
+      }, [loading, uploadProgress]);
+
+      const handleLayoutChange = (newLayout) => {
+        setLayout(newLayout);
+        localStorage.setItem('layout', newLayout);
+      };
+
+      const handleScaleChange = (e) => {
+        const newScale = parseFloat(e.target.value);
+        setScale(newScale);
+        localStorage.setItem('scale', newScale);
+      };
+
+      const handleFileChange = (e) => {
+        const selectedFile = e.target.files[0];
+        if (selectedFile && selectedFile.name.endsWith('.js')) {
+          setFile(selectedFile);
+          setError('');
+          handleUpload(selectedFile);
+        } else {
+          setError('Please upload a valid .js file');
+        }
+      };
+
+      const handleUploadClick = () => {
+        fileInputRef.current.click();
+      };
+
+      const handleUpload = async (selectedFile) => {
+        if (!selectedFile) return;
+        setLoading(true);
+        setUploadProgress(0);
+        setDisplayProgress(0);
+
+        const formData = new FormData();
+        formData.append('file', selectedFile);
+
+        try {
+          const response = await axios.post('http://localhost:8000/upload', formData, {
+            onUploadProgress: (progressEvent) => {
+              const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+              setUploadProgress(percentCompleted);
+            },
+          });
+          setLoading(false);
+          setRendering(true);
+
+          console.log("Backend response:", response.data);
+          console.log("Tweets length:", response.data.tweets.length);
+          console.log("Sentiments length:", response.data.analysis.sentiments.length);
+          const loadedTweets = response.data.tweets || [];
+          setTweets(loadedTweets);
+          setFilteredTweets(loadedTweets);
+
+          if (loadedTweets.length > 0) {
+            const dates = loadedTweets.map(tweet => new Date(tweet.created_at).getTime());
+            const minDate = Math.min(...dates);
+            const maxDate = Math.max(...dates);
+            setDateLimits({ min: minDate, max: maxDate });
+
+            const oneYearInMs = 366 * 24 * 60 * 60 * 1000;
+            const defaultStart = Math.max(minDate, maxDate - oneYearInMs);
+            setDateRange({ start: defaultStart, end: maxDate });
+            console.log("Date limits set:", { min: minDate, max: maxDate });
+            console.log("Date range initialized to last 366 days:", { start: defaultStart, end: maxDate });
+          } else {
+            setDateLimits({ min: null, max: null });
+            setDateRange({ start: null, end: null });
+            console.log("No tweets loaded, date limits and range reset to null");
+          }
+
+          setAnalysis(response.data.analysis || { topics: [], sentiments: [], clusters: [], interests: [] });
+          setError('');
+        } catch (err) {
+          console.error("Upload error:", err);
+          setError('Error processing file: ' + (err.message || 'Unknown error'));
+        } finally {
+          setLoading(false);
+          setUploadProgress(0);
+          setDisplayProgress(0);
+          setRendering(false);
+        }
+      };
+
+      // Fetch pre-processed tweets from the server
+      const fetchTweets = async () => {
+        try {
+          setLoading(true);
+          const params = {
+            query: query || '',
+            interest: selectedInterest || '',
+            dateStart: dateRange.start || '',
+            dateEnd: dateRange.end || '',
+            showImages: showImages,
+            showVideos: showVideos,
+            showLinks: showLinks,
+          };
+          const response = await axios.get('http://localhost:8000/tweets', { params });
+          console.log("Fetched tweets from server:", response.data);
+          
+          const loadedTweets = response.data.tweets || [];
+          setTweets(loadedTweets);
+          setFilteredTweets(loadedTweets);
+
+          if (loadedTweets.length > 0) {
+            const dates = loadedTweets.map(tweet => new Date(tweet.created_at).getTime());
+            const minDate = Math.min(...dates);
+            const maxDate = Math.max(...dates);
+            setDateLimits({ min: minDate, max: maxDate });
+
+            const oneYearInMs = 366 * 24 * 60 * 60 * 1000;
+            const defaultStart = Math.max(minDate, maxDate - oneYearInMs);
+            setDateRange(prev => {
+              if (prev.start && prev.end) return prev;
+              return { start: defaultStart, end: maxDate };
+            });
+            console.log("Date limits set:", { min: minDate, max: maxDate });
+            console.log("Date range initialized to last 366 days:", { start: defaultStart, end: maxDate });
+          } else {
+            setDateLimits({ min: null, max: null });
+            setDateRange({ start: null, end: null });
+            console.log("No tweets loaded, date limits and range reset to null");
+          }
+
+          setAnalysis(response.data.analysis || { topics: [], sentiments: [], clusters: [], interests: [] });
+          setError('');
+        } catch (err) {
+          console.error("Error fetching tweets:", err);
+          setError('Error fetching tweets: ' + (err.message || 'Unknown error'));
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      useEffect(() => {
+        fetchTweets();
+      }, [query, selectedInterest, dateRange, showImages, showVideos, showLinks]);
+
+      useEffect(() => {
+        const handleResize = () => {
+          setDimensions({ width: window.innerWidth, height: window.innerHeight });
+        };
+
+        window.addEventListener('resize', handleResize);
+        return () => window.removeEventListener('resize', handleResize);
+      }, []);
+
+      useEffect(() => {
+        console.log("Bubble layout useEffect triggered:", { filteredTweetsLength: filteredTweets.length, layout });
+        if (!filteredTweets.length || layout !== 'bubble') return;
+
+        const { width, height } = dimensions;
+
+        d3.select(svgRef.current).selectAll("*").remove();
+
+        const svg = d3.select(svgRef.current)
+          .attr("width", width)
+          .attr("height", height)
+          .call(d3.zoom().on("zoom", (event) => {
+            svg.attr("transform", event.transform);
+            zoomTransformRef.current = event.transform;
+            const newZoomLevel = event.transform.k;
+            setZoomLevel(newZoomLevel);
+            console.log("Zoom level updated:", newZoomLevel);
+          }))
+          .append("g");
+
+        svg.attr("transform", zoomTransformRef.current);
+
+        const nodes = filteredTweets.map(tweet => ({
+          id: tweet.id,
+          size: Math.max(20, Math.sqrt(tweet.favorite_count + tweet.retweet_count + 1) * 8) * scale,
+          sentiment: tweet.sentiment,
+          media: tweet.media.length > 0 ? tweet.media[0].url : null,
+          tweet: tweet
+        }));
+        console.log("Nodes created for bubble layout:", nodes.length);
+
+        const simulation = d3.forceSimulation(nodes)
+          .force("charge", d3.forceManyBody().strength(5))
+          .force("center", d3.forceCenter(width / 2, height / 2))
+          .force("collision", d3.forceCollide().radius(d => d.size + 2));
+
+        const node = svg.selectAll(".node")
+          .data(nodes)
+          .enter()
+          .append("g")
+          .attr("class", "node")
+          .on("click", (event, d) => setSelectedTweet(d.tweet));
+
+        node.append("circle")
+          .attr("r", d => d.size)
+          .attr("fill", d => d.sentiment)
+          .attr("stroke", "#000") /* Dark theme stroke */
+          .attr("stroke-width", 3);
+
+        node.filter(d => d.media)
+          .append("image")
+          .attr("xlink:href", d => d.media)
+          .attr("x", d => -d.size * 0.8)
+          .attr("y", d => -d.size * 0.8)
+          .attr("width", d => d.size * 1.6)
+          .attr("height", d => d.size * 1.6)
+          .attr("clip-path", d => `circle(${d.size * 0.8}px at ${d.size * 0.8}px ${d.size * 0.8}px)`);
+
+        simulation.on("tick", () => {
+          node.attr("transform", d => `translate(${d.x},${d.y})`);
+        });
+
+        return () => {
+          // Cleanup if needed
+        };
+      }, [filteredTweets, dimensions, layout, scale]);
+
+      const renderTweetText = (tweet) => {
+        let text = tweet.full_text;
+        
+        const urlRegex = /(https?:\/\/[^\s]+)/g;
+        text = text.replace(urlRegex, url => (
+          `<a href="${url}" target="_blank" rel="noopener noreferrer" class="text-blue-500 underline">${url}</a>`
+        ));
+
+        if (tweet.user_mentions && Array.isArray(tweet.user_mentions)) {
+          tweet.user_mentions.forEach(mention => {
+            const mentionRegex = new RegExp(`@${mention.screen_name}\\b`, 'gi');
+            text = text.replace(mentionRegex, `<a href="https://x.com/${mention.screen_name}" target="_blank" rel="noopener noreferrer" class="text-blue-500 underline">@${mention.screen_name}</a>`);
+          });
+        }
+
+        if (tweet.hashtags && Array.isArray(tweet.hashtags)) {
+          tweet.hashtags.forEach(hashtag => {
+            const hashtagRegex = new RegExp(`#${hashtag.text}\\b`, 'gi');
+            text = text.replace(hashtagRegex, `<a href="https://x.com/hashtag/${hashtag.text}" target="_blank" rel="noopener noreferrer" class="text-blue-500 underline">#${hashtag.text}</a>`);
+          });
+        }
+
+        return { __html: text };
+      };
+
+      const handleDateRangeChange = (e, type) => {
+        const value = parseInt(e.target.value);
+        setDateRange(prev => {
+          const newRange = { ...prev };
+          newRange[type] = value;
+          if (type === 'start' && value > prev.end) {
+            newRange.end = value;
+          } else if (type === 'end' && value < prev.start) {
+            newRange.start = value;
+          }
+          console.log("Date range updated:", newRange);
+          return newRange;
+        });
+      };
+
+      const getRangeFillStyle = () => {
+        if (!dateLimits.min || !dateLimits.max || !dateRange.start || !dateRange.end) return { left: '0%', width: '0%' };
+        const range = dateLimits.max - dateLimits.min;
+        const leftPercent = ((dateRange.start - dateLimits.min) / range) * 100;
+        const widthPercent = ((dateRange.end - dateRange.start) / range) * 100;
+        return {
+          left: `${leftPercent}%`,
+          width: `${widthPercent}%`
+        };
+      };
+
+      const formatDate = (timestamp) => {
+        return timestamp ? new Date(timestamp).toLocaleDateString() : 'N/A';
+      };
+
+      const getGridCols = (availableWidth) => {
+        const cellWidth = 150 * scale;
+        const maxColumns = Math.floor(availableWidth / cellWidth);
+        const adjustedCols = Math.max(1, maxColumns);
+        console.log(`Grid Columns: availableWidth=${availableWidth}, cellWidth=${cellWidth}, adjustedCols=${adjustedCols}`);
+        return adjustedCols;
+      };
+
+      const GridItem = ({ columnIndex, rowIndex, style, data }) => {
+        const index = rowIndex * data.columnCount + columnIndex;
+        if (index >= data.items.length) return null;
+        const tweet = data.items[index];
+        const showMedia = scale >= 0.75;
+        const hasMedia = tweet.media.length > 0;
+        return (
+          <div
+            style={{
+              ...style,
+              width: 150 * scale,
+              height: 150 * scale,
+            }}
+            className="grid-cell bg-gray-800 p-2 rounded-lg shadow cursor-pointer hover:shadow-lg transition-shadow flex flex-col"
+            onClick={() => setSelectedTweet(tweet)}
+          >
+            {hasMedia && showMedia && (
+              <img
+                src={tweet.media[0].url}
+                alt="Tweet media"
+                className="rounded mb-1"
+              />
+            )}
+            <p
+              className="text-xs text-gray-200 truncate flex-1 overflow-hidden"
+              style={{ fontSize: `${12 * scale}px` }}
+            >
+              {tweet.full_text}
+            </p>
+            <p
+              className="text-[10px] text-gray-400 mt-0.5"
+              style={{ fontSize: `${10 * scale}px` }}
+            >
+              {new Date(tweet.created_at).toLocaleString()}
+            </p>
+            <div
+              className="flex justify-between mt-0.5 text-[10px] text-gray-400"
+              style={{ fontSize: `${10 * scale}px` }}
+            >
+              <span>Likes: {tweet.favorite_count}</span>
+              <span>Retweets: {tweet.retweet_count}</span>
+            </div>
+          </div>
+        );
+      };
+
+      return (
+        <div className="relative w-screen h-screen">
+          {layout === 'bubble' && (
+            filteredTweets.length > 0 ? (
+              <svg ref={svgRef} className="absolute inset-0 w-full h-full"></svg>
+            ) : (
+              <div className="text-center text-gray-400 mt-4">
+                No tweets to display. Adjust filters or upload a file.
+              </div>
+            )
+          )}
+
+          {layout === 'grid' && (
+            <div className="absolute inset-0 p-2 grid-container">
+              {filteredTweets.length > 0 ? (
+                <FixedSizeGrid
+                  columnCount={getGridCols(dimensions.width - 16)}
+                  columnWidth={150 * scale}
+                  height={dimensions.height - 16}
+                  rowCount={Math.ceil(filteredTweets.length / getGridCols(dimensions.width - 16))}
+                  rowHeight={150 * scale}
+                  width={dimensions.width - 16}
+                  itemData={{
+                    items: filteredTweets,
+                    columnCount: getGridCols(dimensions.width - 16)
+                  }}
+                >
+                  {GridItem}
+                </FixedSizeGrid>
+              ) : (
+                <div className="text-center text-gray-400 mt-4">
+                  No tweets to display. Adjust filters or upload a file.
+              </div>
+              )}
+            </div>
+          )}
+
+          <div className="absolute top-4 left-4 bg-gray-800 p-3 rounded-lg shadow-lg max-w-xs w-full">
+            <div className="flex justify-between items-center mb-2">
+              <h1 className="text-lg font-bold text-white">X Backup Explorer</h1>
+            </div>
+            <div className="space-y-2">
+              <div>
+                <input
+                  type="file"
+                  accept=".js"
+                  ref={fileInputRef}
+                  style={{ display: 'none' }}
+                  onChange={handleFileChange}
+                />
+                <button
+                  onClick={handleUploadClick}
+                  disabled={loading || rendering}
+                  className="bg-blue-500 text-white text-sm p-1 rounded w-full disabled:opacity-50 hover:bg-blue-600"
+                >
+                  {loading ? `Processing (${displayProgress}%)` : rendering ? 'Rendering' : tweets.length > 0 ? `Loaded (${tweets.length} tweets)` : 'Upload'}
+                </button>
+                {error && <p className="text-red-500 text-xs mt-1">{error}</p>}
+              </div>
+
+              <input
+                type="text"
+                placeholder="Search tweets..."
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                className="text-sm p-1 border rounded w-full border-gray-600 bg-gray-700 text-white placeholder-gray-400"
+                style={{ backgroundColor: '#374151' }} // Fallback
+              />
+
+              <select
+                value={selectedInterest}
+                onChange={(e) => setSelectedInterest(e.target.value)}
+                className="text-sm p-1 border rounded w-full border-gray-600 bg-gray-700 text-white"
+                style={{ backgroundColor: '#374151' }} // Fallback
+              >
+                <option value="">All Interests</option>
+                {analysis.interests.map(interest => (
+                  <option key={interest} value={interest}>{interest}</option>
+                ))}
+              </select>
+
+              <div className="toggle-switch">
+                <span>Bubble</span>
+                <input
+                  type="checkbox"
+                  id="layoutSwitch"
+                  checked={layout === 'grid'}
+                  onChange={(e) => handleLayoutChange(e.target.checked ? 'grid' : 'bubble')}
+                />
+                <label htmlFor="layoutSwitch">
+                  <div className="slider"></div>
+                </label>
+                <span>Grid</span>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-sm text-white">Scale: {scale.toFixed(1)}x</label>
+                <input
+                  type="range"
+                  min="0.5"
+                  max="2.0"
+                  step="0.1"
+                  value={scale}
+                  onChange={handleScaleChange}
+                  className="w-full"
+                />
+              </div>
+
+              <p className="text-sm text-white">
+                Tweets Displayed: {filteredTweets.length}
+              </p>
+
+              <div className="space-y-1">
+                <div className="filter-toggle">
+                  <input
+                    type="checkbox"
+                    id="imagesFilter"
+                    checked={showImages}
+                    onChange={(e) => setShowImages(e.target.checked)}
+                  />
+                  <label htmlFor="imagesFilter">
+                    <div className="slider"></div>
+                  </label>
+                  <span>Images</span>
+                </div>
+                <div className="filter-toggle">
+                  <input
+                    type="checkbox"
+                    id="videosFilter"
+                    checked={showVideos}
+                    onChange={(e) => setShowVideos(e.target.checked)}
+                  />
+                  <label htmlFor="videosFilter">
+                    <div className="slider"></div>
+                  </label>
+                  <span>Videos</span>
+                </div>
+                <div className="filter-toggle">
+                  <input
+                    type="checkbox"
+                    id="linksFilter"
+                    checked={showLinks}
+                    onChange={(e) => setShowLinks(e.target.checked)}
+                  />
+                  <label htmlFor="linksFilter">
+                    <div className="slider"></div>
+                  </label>
+                  <span>Links</span>
+                </div>
+              </div>
+
+              {dateLimits.min && dateLimits.max && (
+                <div className="space-y-1">
+                  <label className="text-sm text-white">Date Range:</label>
+                  <div className="flex items-center space-x-2">
+                    <span className="text-xs text-white">{formatDate(dateRange.start)}</span>
+                    <div className="range-slider-container flex-1">
+                      <input
+                        type="range"
+                        min={dateLimits.min}
+                        max={dateLimits.max}
+                        value={dateRange.start || dateLimits.min}
+                        onChange={(e) => handleDateRangeChange(e, 'start')}
+                      />
+                      <input
+                        type="range"
+                        min={dateLimits.min}
+                        max={dateLimits.max}
+                        value={dateRange.end || dateLimits.max}
+                        onChange={(e) => handleDateRangeChange(e, 'end')}
+                      />
+                      <div
+                        className="range-fill"
+                        style={getRangeFillStyle()}
+                      ></div>
+                    </div>
+                    <span className="text-xs text-white">{formatDate(dateRange.end)}</span>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {selectedTweet && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+              <div className="bg-gray-800 rounded-lg p-4 max-w-md w-full max-h-[90vh] overflow-y-auto">
+                <h2 className="text-lg font-bold mb-2 text-white">Tweet Details</h2>
+                <p className="text-sm text-gray-200">
+                  <strong>Text:</strong>
+                  <span className="text-sm" dangerouslySetInnerHTML={renderTweetText(selectedTweet)} />
+                </p>
+                <p className="text-sm text-gray-200"><strong>Date:</strong> {new Date(selectedTweet.created_at).toLocaleString()}</p>
+                <p className="text-sm text-gray-200"><strong>Likes:</strong> {selectedTweet.favorite_count}</p>
+                <p className="text-sm text-gray-200"><strong>Retweets:</strong> {selectedTweet.retweet_count}</p>
+                <p className="text-sm text-gray-200">
+                  <strong>Sentiment:</strong>
+                  <span
+                    style={{
+                      display: 'inline-block',
+                      width: '16px',
+                      height: '16px',
+                      backgroundColor: selectedTweet.sentiment,
+                      marginLeft: '5px',
+                      verticalAlign: 'middle'
+                    }}
+                  ></span>
+                </p>
+                {selectedTweet.user_mentions.length > 0 && (
+                  <p className="text-sm text-gray-200"><strong>Mentions:</strong> {selectedTweet.user_mentions.map(m => (
+                    <a
+                      href={`https://x.com/${m.screen_name}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-blue-500 underline"
+                    >
+                      @{m.screen_name}
+                    </a>
+                  )).reduce((prev, curr) => [prev, ', ', curr])}</p>
+                )}
+                {selectedTweet.hashtags.length > 0 && (
+                  <p className="text-sm text-gray-200"><strong>Hashtags:</strong> {selectedTweet.hashtags.map(h => (
+                    <a
+                      href={`https://x.com/hashtag/${h.text}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-blue-500 underline"
+                    >
+                      #{h.text}
+                    </a>
+                  )).reduce((prev, curr) => [prev, ', ', curr])}</p>
+                )}
+                {selectedTweet.media.length > 0 && (
+                  <div className="mt-2">
+                    <h3 className="font-semibold text-sm text-white">Media</h3>
+                    {selectedTweet.media.map((m, i) => (
+                      <img key={i} src={m.url} alt="Tweet media" className="max-w-full h-auto rounded mt-1" />
+                    ))}
+                  </div>
+                )}
+                <a
+                  href={`https://x.com/nobulart/status/${selectedTweet.id}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block mt-2 bg-blue-500 text-white text-sm p-1 rounded text-center hover:bg-blue-600"
+                >
+                  View on X
+                </a>
+                <button
+                  onClick={() => setSelectedTweet(null)}
+                  className="mt-2 bg-red-500 text-white text-sm p-1 rounded w-full hover:bg-red-600"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    };
+
+    ReactDOM.render(<App />, document.getElementById('root'));
+  </script>
+</body>
+</html>
