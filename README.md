@@ -1,5 +1,7 @@
 # Xplora - Twitter Backup Explorer
 
+![Alt text](xplora1.png "Xplora Interface")
+
 Xplora is a web application that allows users to explore and visualize their Twitter data backups. It provides a bubble or grid layout to display tweets, with filtering options for search queries, interests, date ranges, and media types (images, videos, links). The app includes sentiment analysis for tweets and supports both pre-loaded and user-uploaded Twitter data.
 
 ## Features
