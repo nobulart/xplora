@@ -25,15 +25,14 @@ xplora/
 │   ├── favicon.ico      # Favicon for the app
 │   └── lib/             # External JS libraries
 │       └── react-window.umd.min.js
-├── tweets_media/        # Media files for tweets
-│   ├── <media files>    # e.g., 12345-abcde.jpg
+├── tweets_media/        # Empty directory for tweet media files (contains .gitkeep)
 └── requirements.txt     # Python dependencies for the backend
 ```
 
 ## Prerequisites
 
 - **Python 3.8+**: Required for the FastAPI backend.
-- **Node.js**: Optional, only if you want to rebuild the frontend (e.g., precompile JSX).
+- **Node.js**: Required for serving the frontend (via `http-server`) and optional for rebuilding the frontend (e.g., precompiling JSX).
 - **Git**: To clone and manage the repository.
 
 ## Setup Instructions
@@ -41,7 +40,7 @@ xplora/
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/<yourusername>/xplora.git
+git clone https://github.com/nobulart/xplora.git
 cd xplora
 ```
 
@@ -61,7 +60,11 @@ The `requirements.txt` includes dependencies like `fastapi`, `uvicorn`, `pandas`
 
 #### (Optional) Pre-load Tweets Data
 
-If you have a Twitter data backup (`tweets.js`), place it in the `public/` directory. The app will automatically load and process it on startup. Ensure any associated media files are placed in the `tweets_media/` directory with the correct naming convention (e.g., `tweets_media/<tweet_id>-<media_identifier>.<ext>`).
+If you have a Twitter data backup (`tweets.js`), place it in the `public/` directory. The app will automatically load and process it on startup.
+
+#### (Optional) Add Media Files
+
+The `tweets_media/` directory is included in the repository as an empty folder with a `.gitkeep` file to ensure it exists. If your `tweets.js` file references media files, you should host them externally (e.g., on AWS S3) and update the `extract_media` function in `main.py` to use external URLs. Alternatively, for local testing, you can place the media files in `tweets_media/` with the correct naming convention (e.g., `tweets_media/<tweet_id>-<media_identifier>.<ext>`). These files should not be committed to the repository.
 
 ### 3. Run the Backend Server
 
@@ -75,26 +78,25 @@ The backend will be available at `http://localhost:8000`.
 
 ### 4. Run the Frontend
 
-The frontend (`index.html`) is a static React app that uses in-browser Babel to compile JSX. You can serve it using a simple static file server.
+The frontend (`index.html`) is a static React app that uses in-browser Babel to compile JSX. You can serve it using a simple static file server like `http-server`.
 
-#### Option 1: Use a Static File Server
+#### Install `http-server`
 
-Install a static file server like `xplora` (if available) or `http-server`:
+Install `http-server` globally using `npm`:
 
 ```bash
 npm install -g http-server
-http-server . -p 3000
 ```
 
-Alternatively, if you’re using `xplora` (as in your setup):
+#### Serve the Frontend
 
 ```bash
-xplora serve . --port 3000
+http-server . -p 3000
 ```
 
 The frontend will be available at `http://localhost:3000`.
 
-#### Option 2: Precompile the Frontend (Recommended for Production)
+#### Option: Precompile the Frontend (Recommended for Production)
 
 For better performance, precompile the JSX code instead of using in-browser Babel:
 
@@ -146,7 +148,7 @@ For better performance, precompile the JSX code instead of using in-browser Babe
    npx webpack
    ```
 
-5. Serve the app as described in Option 1.
+5. Serve the app as described above using `http-server`.
 
 ### 5. Access the App
 
@@ -176,6 +178,20 @@ The backend (`main.py`) provides the following endpoints:
   - `showImages`: Filter for tweets with images (boolean)
   - `showVideos`: Filter for tweets with videos (boolean)
   - `showLinks`: Filter for tweets with links (boolean)
+
+## Development Status (as of May 19, 2025)
+
+As of May 19, 2025, Xplora is fully functional with the following features implemented:
+- Interactive tweet visualization in bubble and grid layouts.
+- Filtering by search query, interests, date range, and media types.
+- Sentiment analysis with color-coded visualization.
+- Support for pre-loaded and user-uploaded Twitter data.
+
+### Planned Improvements
+- **Frontend Precompilation**: Transition from in-browser Babel to a precompiled JavaScript bundle for better performance.
+- **External Media Hosting**: Fully implement external hosting for media files (e.g., on AWS S3) to reduce repository size and improve scalability.
+- **Pagination**: Add pagination to the `/tweets` endpoint to handle large datasets more efficiently.
+- **Enhanced Visualization**: Add more interactive features to the D3.js bubble layout, such as tooltips and advanced zooming.
 
 ## Development
 
@@ -207,7 +223,7 @@ Run both the frontend and backend as described in the Setup Instructions.
    - Set the start command: `uvicorn main:app --host 0.0.0.0 --port $PORT`.
    - Add an environment variable `PORT` (Render sets this automatically).
 3. **Update Frontend URLs**: Replace `http://localhost:8000` in `index.html` with the deployed backend URL (e.g., `https://your-app.onrender.com`).
-4. **Optimize Media Storage**: For production, host `tweets_media/` files on a CDN or cloud storage (e.g., AWS S3) instead of including them in the repository.
+4. **Optimize Media Storage**: For production, host media files (normally in `tweets_media/`) on a CDN or cloud storage (e.g., AWS S3) instead of including them in the repository. Update `main.py` to reference external URLs.
 
 ## Contributing
 
