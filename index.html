@@ -11,7 +11,7 @@
   <script src="https://cdn.jsdelivr.net/npm/axios@1.4.0/dist/axios.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/d3@7.8.5/dist/d3.min.js"></script>
   <script src="/public/lib/react-window.umd.min.js" onerror="console.error('Failed to load react-window script'); window.ReactWindowLoadError = true;"></script>
-  <link href="/public/output.css" rel="stylesheet">
+  <link href="/public/output.css" rel="stylesheet" onerror="document.getElementById('css-error').style.display = 'block';">
   <style>
     /* Custom styles for the dual-thumb slider */
     .range-slider-container {
@@ -30,6 +30,7 @@
       -webkit-appearance: none;
       appearance: none;
       background: transparent;
+      z-index: 15; /* Ensure slider thumbs are above the range-fill */
     }
     .range-slider-container input[type="range"]::-webkit-slider-runnable-track {
       height: 4px;
@@ -68,6 +69,7 @@
       pointer-events: none;
       top: 50%;
       transform: translateY(-50%);
+      z-index: 15; /* Below the slider thumbs */
     }
     /* Enforce strict square cells in the grid */
     .grid-cell {
@@ -198,9 +200,55 @@
     input, select {
       background-color: #374151 !important; /* Tailwind's bg-gray-700 */
     }
+    /* Fallback styles for tool palette */
+    .tool-palette {
+      position: absolute;
+      top: 16px;
+      left: 16px;
+      background-color: #1f2937; /* Fallback dark gray */
+      padding: 12px;
+      border-radius: 8px;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+      max-width: 300px;
+      width: 100%;
+      color: #e5e7eb; /* Light text */
+    }
+    .tool-palette h1 {
+      font-size: 1.125rem;
+      font-weight: bold;
+      color: white;
+      margin-bottom: 8px;
+    }
+    .tool-palette input[type="text"],
+    .tool-palette select,
+    .tool-palette button {
+      width: 100%;
+      padding: 4px;
+      margin-bottom: 8px;
+      border-radius: 4px;
+      border: 1px solid #4b5563;
+      background-color: #374151;
+      color: white;
+    }
+    .tool-palette button {
+      background-color: #3b82f6;
+    }
+    .tool-palette button:disabled {
+      opacity: 0.5;
+    }
+    .tool-palette p {
+      font-size: 0.875rem;
+    }
+    .tool-palette label {
+      font-size: 0.875rem;
+      color: white;
+    }
   </style>
 </head>
-<body class="font-sans overflow-hidden transition-colors duration-300 bg-gray-900">
+<body style="font-family: sans-serif; overflow: hidden; background-color: #111827;">
+  <div id="css-error" style="display: none; color: red; padding: 16px; text-align: center;">
+    Failed to load Tailwind CSS. Please ensure /public/output.css exists and is accessible.
+  </div>
   <div id="root"></div>
   <script type="text/babel" defer>
     const { useState, useEffect, useMemo, useRef } = React;
@@ -212,7 +260,7 @@
         : 'react-window failed to load. Please ensure public/lib/react-window.umd.min.js exists and is accessible.';
       console.error(errorMsg);
       const root = document.getElementById('root');
-      root.innerHTML = `<div class="text-red-500 text-center p-4">Error: ${errorMsg}</div>`;
+      root.innerHTML = `<div style="color: red; text-align: center; padding: 16px;">Error: ${errorMsg}</div>`;
       throw new Error('react-window not loaded');
     }
 
@@ -240,7 +288,9 @@
       const zoomTransformRef = useRef(d3.zoomIdentity);
       const [dimensions, setDimensions] = useState({ width: window.innerWidth, height: window.innerHeight });
       const [dateRange, setDateRange] = useState({ start: null, end: null });
-      const [dateLimits, setDateLimits] = useState({ min: null, max: null });
+      const [pendingDateRange, setPendingDateRange] = useState({ start: null, end: null });
+      const [initialDateLimits, setInitialDateLimits] = useState({ min: null, max: null });
+      const [hasSetInitialDateLimits, setHasSetInitialDateLimits] = useState(false);
       const [zoomLevel, setZoomLevel] = useState(1);
       const fileInputRef = useRef(null);
 
@@ -318,21 +368,22 @@
           setTweets(loadedTweets);
           setFilteredTweets(loadedTweets);
 
-          if (loadedTweets.length > 0) {
-            const dates = loadedTweets.map(tweet => new Date(tweet.created_at).getTime());
-            const minDate = Math.min(...dates);
-            const maxDate = Math.max(...dates);
-            setDateLimits({ min: minDate, max: maxDate });
-
+          if (loadedTweets.length > 0 && response.data.initialDateRange && !hasSetInitialDateLimits) {
+            const { minDate, maxDate } = response.data.initialDateRange;
+            setInitialDateLimits({ min: minDate, max: maxDate });
+            setHasSetInitialDateLimits(true);
             const oneYearInMs = 366 * 24 * 60 * 60 * 1000;
             const defaultStart = Math.max(minDate, maxDate - oneYearInMs);
             setDateRange({ start: defaultStart, end: maxDate });
-            console.log("Date limits set:", { min: minDate, max: maxDate });
+            setPendingDateRange({ start: defaultStart, end: maxDate });
+            console.log("Initial date limits set:", { min: minDate, max: maxDate });
             console.log("Date range initialized to last 366 days:", { start: defaultStart, end: maxDate });
-          } else {
-            setDateLimits({ min: null, max: null });
+          } else if (!loadedTweets.length) {
+            setInitialDateLimits({ min: null, max: null });
+            setHasSetInitialDateLimits(false);
             setDateRange({ start: null, end: null });
-            console.log("No tweets loaded, date limits and range reset to null");
+            setPendingDateRange({ start: null, end: null });
+            console.log("No tweets loaded, initial date limits and range reset to null");
           }
 
           setAnalysis(response.data.analysis || { topics: [], sentiments: [], clusters: [], interests: [] });
@@ -368,24 +419,20 @@
           setTweets(loadedTweets);
           setFilteredTweets(loadedTweets);
 
-          if (loadedTweets.length > 0) {
-            const dates = loadedTweets.map(tweet => new Date(tweet.created_at).getTime());
-            const minDate = Math.min(...dates);
-            const maxDate = Math.max(...dates);
-            setDateLimits({ min: minDate, max: maxDate });
-
+          if (loadedTweets.length > 0 && response.data.initialDateRange && !hasSetInitialDateLimits) {
+            const { minDate, maxDate } = response.data.initialDateRange;
+            setInitialDateLimits({ min: minDate, max: maxDate });
+            setHasSetInitialDateLimits(true);
             const oneYearInMs = 366 * 24 * 60 * 60 * 1000;
             const defaultStart = Math.max(minDate, maxDate - oneYearInMs);
-            setDateRange(prev => {
-              if (prev.start && prev.end) return prev;
-              return { start: defaultStart, end: maxDate };
-            });
-            console.log("Date limits set:", { min: minDate, max: maxDate });
+            setDateRange(prev => prev.start && prev.end ? prev : { start: defaultStart, end: maxDate });
+            setPendingDateRange(prev => prev.start && prev.end ? prev : { start: defaultStart, end: maxDate });
+            console.log("Initial date limits set:", { min: minDate, max: maxDate });
             console.log("Date range initialized to last 366 days:", { start: defaultStart, end: maxDate });
-          } else {
-            setDateLimits({ min: null, max: null });
+          } else if (!loadedTweets.length) {
             setDateRange({ start: null, end: null });
-            console.log("No tweets loaded, date limits and range reset to null");
+            setPendingDateRange({ start: null, end: null });
+            console.log("No tweets loaded, date range reset to null");
           }
 
           setAnalysis(response.data.analysis || { topics: [], sentiments: [], clusters: [], interests: [] });
@@ -398,9 +445,15 @@
         }
       };
 
+      // Trigger fetchTweets only when other filters change, not dateRange
       useEffect(() => {
         fetchTweets();
-      }, [query, selectedInterest, dateRange, showImages, showVideos, showLinks]);
+      }, [query, selectedInterest, showImages, showVideos, showLinks]);
+
+      // Update chart when dateRange is finalized (on mouse up)
+      useEffect(() => {
+        fetchTweets();
+      }, [dateRange]);
 
       useEffect(() => {
         const handleResize = () => {
@@ -505,7 +558,7 @@
 
       const handleDateRangeChange = (e, type) => {
         const value = parseInt(e.target.value);
-        setDateRange(prev => {
+        setPendingDateRange(prev => {
           const newRange = { ...prev };
           newRange[type] = value;
           if (type === 'start' && value > prev.end) {
@@ -513,16 +566,21 @@
           } else if (type === 'end' && value < prev.start) {
             newRange.start = value;
           }
-          console.log("Date range updated:", newRange);
+          console.log("Pending date range updated:", newRange);
           return newRange;
         });
       };
 
+      const handleDateRangeCommit = () => {
+        setDateRange(pendingDateRange);
+        console.log("Date range committed:", pendingDateRange);
+      };
+
       const getRangeFillStyle = () => {
-        if (!dateLimits.min || !dateLimits.max || !dateRange.start || !dateRange.end) return { left: '0%', width: '0%' };
-        const range = dateLimits.max - dateLimits.min;
-        const leftPercent = ((dateRange.start - dateLimits.min) / range) * 100;
-        const widthPercent = ((dateRange.end - dateRange.start) / range) * 100;
+        if (!initialDateLimits.min || !initialDateLimits.max || !pendingDateRange.start || !pendingDateRange.end) return { left: '0%', width: '0%' };
+        const range = initialDateLimits.max - initialDateLimits.min;
+        const leftPercent = ((pendingDateRange.start - initialDateLimits.min) / range) * 100;
+        const widthPercent = ((pendingDateRange.end - pendingDateRange.start) / range) * 100;
         return {
           left: `${leftPercent}%`,
           width: `${widthPercent}%`
@@ -588,19 +646,19 @@
       };
 
       return (
-        <div className="relative w-screen h-screen">
+        <div style={{ position: 'relative', width: '100vw', height: '100vh' }}>
           {layout === 'bubble' && (
             filteredTweets.length > 0 ? (
-              <svg ref={svgRef} className="absolute inset-0 w-full h-full"></svg>
+              <svg ref={svgRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}></svg>
             ) : (
-              <div className="text-center text-gray-400 mt-4">
+              <div style={{ textAlign: 'center', color: '#9ca3af', marginTop: '16px' }}>
                 No tweets to display. Adjust filters or upload a file.
               </div>
             )
           )}
 
           {layout === 'grid' && (
-            <div className="absolute inset-0 p-2 grid-container">
+            <div style={{ position: 'absolute', inset: 0, padding: '8px' }} className="grid-container">
               {filteredTweets.length > 0 ? (
                 <FixedSizeGrid
                   columnCount={getGridCols(dimensions.width - 16)}
@@ -617,14 +675,14 @@
                   {GridItem}
                 </FixedSizeGrid>
               ) : (
-                <div className="text-center text-gray-400 mt-4">
+                <div style={{ textAlign: 'center', color: '#9ca3af', marginTop: '16px' }}>
                   No tweets to display. Adjust filters or upload a file.
-              </div>
+                </div>
               )}
             </div>
           )}
 
-          <div className="absolute top-4 left-4 bg-gray-800 p-3 rounded-lg shadow-lg max-w-xs w-full">
+          <div className="tool-palette absolute top-4 left-4 bg-gray-800 p-3 rounded-lg shadow-lg max-w-xs w-full">
             <div className="flex justify-between items-center mb-2">
               <h1 className="text-lg font-bold text-white">X Backup Explorer</h1>
             </div>
@@ -738,32 +796,36 @@
                 </div>
               </div>
 
-              {dateLimits.min && dateLimits.max && (
+              {initialDateLimits.min && initialDateLimits.max && (
                 <div className="space-y-1">
                   <label className="text-sm text-white">Date Range:</label>
                   <div className="flex items-center space-x-2">
-                    <span className="text-xs text-white">{formatDate(dateRange.start)}</span>
+                    <span className="text-xs text-white">{formatDate(pendingDateRange.start)}</span>
                     <div className="range-slider-container flex-1">
                       <input
                         type="range"
-                        min={dateLimits.min}
-                        max={dateLimits.max}
-                        value={dateRange.start || dateLimits.min}
+                        min={initialDateLimits.min}
+                        max={initialDateLimits.max}
+                        value={pendingDateRange.start || initialDateLimits.min}
                         onChange={(e) => handleDateRangeChange(e, 'start')}
+                        onMouseUp={handleDateRangeCommit}
+                        onTouchEnd={handleDateRangeCommit}
                       />
                       <input
                         type="range"
-                        min={dateLimits.min}
-                        max={dateLimits.max}
-                        value={dateRange.end || dateLimits.max}
+                        min={initialDateLimits.min}
+                        max={initialDateLimits.max}
+                        value={pendingDateRange.end || initialDateLimits.max}
                         onChange={(e) => handleDateRangeChange(e, 'end')}
+                        onMouseUp={handleDateRangeCommit}
+                        onTouchEnd={handleDateRangeCommit}
                       />
                       <div
                         className="range-fill"
                         style={getRangeFillStyle()}
                       ></div>
                     </div>
-                    <span className="text-xs text-white">{formatDate(dateRange.end)}</span>
+                    <span className="text-xs text-white">{formatDate(pendingDateRange.end)}</span>
                   </div>
                 </div>
               )}

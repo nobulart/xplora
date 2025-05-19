@@ -197,7 +197,7 @@ def extract_media(tweet):
                 else:
                     media.append({
                         'url': media_url,
-                        'type': 'media_type'
+                        'type': media_type
                     })
     return media
 
@@ -271,6 +271,15 @@ async def get_tweets(
 ):
     filtered_tweets = pre_processed_tweets
 
+    # Calculate initial min/max dates
+    initial_date_range = {}
+    if pre_processed_tweets:
+        timestamps = [pd.Timestamp(tweet['created_at']).timestamp() * 1000 for tweet in pre_processed_tweets]
+        initial_date_range = {
+            "minDate": int(min(timestamps)),
+            "maxDate": int(max(timestamps))
+        }
+
     if query:
         raw_query = query.lower().strip()
         filtered_tweets = [
@@ -321,7 +330,8 @@ async def get_tweets(
 
     return {
         "tweets": filtered_tweets,
-        "analysis": pre_processed_analysis
+        "analysis": pre_processed_analysis,
+        "initialDateRange": initial_date_range
     }
 
 if __name__ == "__main__":
