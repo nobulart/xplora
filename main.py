@@ -312,46 +312,47 @@ def get_backup_media_url(tweet_id, media_identifier, ext):
             return f"/{candidate_path.replace(os.sep, '/')}"
     return None
 
-def get_cached_media_url(remote_url):
-    """Return an on-demand cache URL for trusted remote media."""
-    if not remote_url:
-        return ""
-    return f"/media-cache?url={urllib.parse.quote(remote_url, safe='')}"
-
 def resolve_media_url(tweet_id, media_url):
     media_identifier = media_url.split('/')[-1].split('.')[0] if media_url else ''
     ext = media_url.split('.')[-1].split('?')[0] if media_url else 'jpg'
     local_url = get_backup_media_url(tweet_id, media_identifier, ext)
     if local_url:
         return local_url
-    return get_cached_media_url(media_url)
+    return media_url
+
+def build_media_item(tweet_id, item):
+    media_url = item.get('media_url_https', item.get('media_url', ''))
+    media_type = item.get('type', 'photo')
+    variants = (
+        item.get('video_info', {}).get('variants', [])
+        if media_type in {'video', 'animated_gif'}
+        else []
+    )
+    playable_url = ""
+    mp4_variants = [
+        variant for variant in variants
+        if variant.get('content_type') == 'video/mp4' and variant.get('url')
+    ]
+    if mp4_variants:
+        playable_url = max(
+            mp4_variants,
+            key=lambda variant: int(variant.get('bitrate') or 0),
+        ).get('url', '')
+    return {
+        'url': resolve_media_url(tweet_id, media_url),
+        'playable_url': playable_url,
+        'type': media_type,
+    }
 
 def extract_media(tweet):
     media = []
     tweet_id = tweet['id']
-    if 'media' in tweet.get('entities', {}):
-        for item in tweet['entities']['media']:
-            media_url = item.get('media_url_https', item.get('media_url', ''))
-            media_type = item.get('type', 'photo')
-            media.append({
-                'url': resolve_media_url(tweet_id, media_url),
-                'type': media_type
-            })
-    elif 'extended_entities' in tweet and 'media' in tweet['extended_entities']:
-        for item in tweet['extended_entities']['media']:
-            if item.get('type') == 'video' or item.get('type') == 'animated_gif':
-                media_url = item.get('media_url_https', item.get('media_url', ''))
-                media.append({
-                    'url': resolve_media_url(tweet_id, media_url),
-                    'type': 'video'
-                })
-            else:
-                media_url = item.get('media_url_https', item.get('media_url', ''))
-                media_type = item.get('type', 'photo')
-                media.append({
-                    'url': resolve_media_url(tweet_id, media_url),
-                    'type': media_type
-                })
+    media_items = tweet.get('extended_entities', {}).get(
+        'media',
+        tweet.get('entities', {}).get('media', []),
+    )
+    for item in media_items:
+        media.append(build_media_item(tweet_id, item))
     return media
 
 def process_tweets(file_content, progress_callback=None):

@@ -13,6 +13,8 @@ or card grid.
   `tweets.js`
 - Bubble, radial cloud, timeline, and card views
 - Search, interest, date, media, and sort filters
+- Scientific palette controls for coloring bubbles by engagement, likes,
+  retweets, date, or media type
 - Persisted UI preferences with `localStorage`
 - Larger tweet detail modal for desktop and UHD displays
 - Server-side processed archive caching and client-side API response caching
@@ -138,7 +140,9 @@ Recommended Railway settings:
   `tweets.js`
 - `GET /tweets`: filtered tweet summaries
 - `GET /tweets/{tweet_id}`: full tweet detail
-- `GET /media-cache?url=...`: local cache/proxy for trusted remote media URLs
+- `GET /media-cache?url=...`: optional local cache/proxy endpoint for trusted
+  remote media URLs; the default UI loads remote media directly in the browser
+  so Railway does not pay image/video bandwidth
 
 Common `/tweets` query parameters:
 

@@ -589,7 +589,8 @@
       display: grid;
       gap: 12px;
     }
-    .tweet-media-grid img {
+    .tweet-media-grid img,
+    .tweet-media-grid video {
       width: 100%;
       max-height: min(66vh, 760px);
       object-fit: contain;
@@ -644,6 +645,27 @@
     }
 
     const { FixedSizeGrid } = window.ReactWindow;
+    const SCIENTIFIC_PALETTES = {
+      viridis: ['#440154', '#482878', '#3e4989', '#31688e', '#26828e', '#1f9e89', '#35b779', '#6ece58', '#b5de2b', '#fde725'],
+      plasma: ['#0d0887', '#41049d', '#6a00a8', '#8f0da4', '#b12a90', '#cc4778', '#e16462', '#f2844b', '#fca636', '#fcce25', '#f0f921'],
+      inferno: ['#000004', '#1b0c41', '#4a0c6b', '#781c6d', '#a52c60', '#cf4446', '#ed6925', '#fb9b06', '#f7d13d', '#fcffa4'],
+      magma: ['#000004', '#180f3d', '#440f76', '#721f81', '#9e2f7f', '#cd4071', '#f1605d', '#fd9668', '#feca8d', '#fcfdbf'],
+      cividis: ['#00204c', '#123570', '#3b496c', '#575d6d', '#707173', '#8a8678', '#a59c74', '#c3b369', '#e1cc55', '#ffea46'],
+      turbo: ['#30123b', '#4145ab', '#4675ed', '#39a2fc', '#1bcfd4', '#24eca6', '#61fc6c', '#a4fc3b', '#d1e834', '#f3b32a', '#f36b21', '#c92303', '#7a0403']
+    };
+    const COLOR_METRICS = {
+      engagement: { label: 'Engagement', getValue: (tweet) => (tweet.favorite_count || 0) + (tweet.retweet_count || 0), scale: 'log' },
+      likes: { label: 'Likes', getValue: (tweet) => tweet.favorite_count || 0, scale: 'log' },
+      retweets: { label: 'Retweets', getValue: (tweet) => tweet.retweet_count || 0, scale: 'log' },
+      date: { label: 'Date', getValue: (tweet) => tweet.created_ts || 0, scale: 'linear' },
+      media: { label: 'Media type', getValue: (tweet) => {
+        const mediaTypes = new Set((tweet.media || []).map((item) => item.type));
+        if (mediaTypes.has('video') || mediaTypes.has('animated_gif')) return 3;
+        if (mediaTypes.has('photo')) return 2;
+        if (tweet.has_links) return 1;
+        return 0;
+      }, scale: 'linear' },
+    };
     const API_BASE_URL = window.location.port === '3000'
       ? 'http://localhost:8000'
       : window.location.origin;
@@ -689,6 +711,27 @@
       return `tweets:${JSON.stringify(sortedEntries)}`;
     };
 
+    const interpolateHex = (left, right, factor) => {
+      const parse = (color) => [
+        parseInt(color.slice(1, 3), 16),
+        parseInt(color.slice(3, 5), 16),
+        parseInt(color.slice(5, 7), 16)
+      ];
+      const [lr, lg, lb] = parse(left);
+      const [rr, rg, rb] = parse(right);
+      const toHex = (value) => Math.round(value).toString(16).padStart(2, '0');
+      return `#${toHex(lr + (rr - lr) * factor)}${toHex(lg + (rg - lg) * factor)}${toHex(lb + (rb - lb) * factor)}`;
+    };
+
+    const getPaletteColor = (paletteName, value) => {
+      const palette = SCIENTIFIC_PALETTES[paletteName] || SCIENTIFIC_PALETTES.viridis;
+      const bounded = Math.min(1, Math.max(0, Number.isFinite(value) ? value : 0));
+      const scaled = bounded * (palette.length - 1);
+      const index = Math.floor(scaled);
+      if (index >= palette.length - 1) return palette[palette.length - 1];
+      return interpolateHex(palette[index], palette[index + 1], scaled - index);
+    };
+
     const App = () => {
       const [file, setFile] = useState(null);
       const [tweets, setTweets] = useState([]);
@@ -722,6 +765,8 @@
       const [sortOrder, setSortOrder] = useState(localStorage.getItem('sortOrder') || 'desc');
       const [bubbleLayout, setBubbleLayout] = useState(localStorage.getItem('bubbleLayout') || 'cloud');
       const [bubbleSpacing, setBubbleSpacing] = useState(parseFloat(localStorage.getItem('bubbleSpacing')) || 1.2);
+      const [colorPalette, setColorPalette] = useState(localStorage.getItem('colorPalette') || 'viridis');
+      const [colorMetric, setColorMetric] = useState(localStorage.getItem('colorMetric') || 'engagement');
       const [isPanelVisible, setIsPanelVisible] = useState(localStorage.getItem('isPanelVisible') !== 'false');
       const canvasRef = useRef(null);
       const bubbleNodesRef = useRef([]);
@@ -735,6 +780,22 @@
       const [hasSetInitialDateLimits, setHasSetInitialDateLimits] = useState(false);
       const [zoomLevel, setZoomLevel] = useState(1);
       const fileInputRef = useRef(null);
+      const colorDomain = useMemo(() => {
+        const metric = COLOR_METRICS[colorMetric] || COLOR_METRICS.engagement;
+        const values = filteredTweets.map(metric.getValue);
+        const min = Math.min(...values, 0);
+        const max = Math.max(...values, 1);
+        return { min, max, metric };
+      }, [filteredTweets, colorMetric]);
+
+      const getTweetColor = (tweet) => {
+        const rawValue = colorDomain.metric.getValue(tweet);
+        const min = colorDomain.metric.scale === 'log' ? Math.log1p(colorDomain.min) : colorDomain.min;
+        const max = colorDomain.metric.scale === 'log' ? Math.log1p(colorDomain.max) : colorDomain.max;
+        const value = colorDomain.metric.scale === 'log' ? Math.log1p(rawValue) : rawValue;
+        const normalized = max === min ? 0.5 : (value - min) / (max - min);
+        return getPaletteColor(colorPalette, normalized);
+      };
 
       // Smooth progress update effect
       useEffect(() => {
@@ -1074,17 +1135,17 @@
           ctx.arc(node.x, node.y, node.r, 0, Math.PI * 2);
           ctx.fillStyle = node.color;
           ctx.fill();
-          ctx.lineWidth = 3 / transform.k;
+          ctx.lineWidth = 1.5 / transform.k;
           ctx.strokeStyle = '#000';
           ctx.stroke();
 
-          if (!node.media || index >= BUBBLE_IMAGE_LIMIT || node.r < 18) {
+          if (!node.mediaUrl || index >= BUBBLE_IMAGE_LIMIT || node.r < 18) {
             drawBubblePlaceholder(ctx, node, transform);
             return;
           }
 
           const cache = bubbleImageCacheRef.current;
-          const mediaUrl = getMediaUrl(node.media);
+          const mediaUrl = getMediaUrl(node.mediaUrl);
           let image = cache.get(mediaUrl);
           if (!image) {
             image = new Image();
@@ -1238,8 +1299,8 @@
             x: 0,
             y: 0,
             r: (5 + sizeFactor * 30) * scale,
-            color: tweet.color,
-            media: tweet.media.length > 0 ? tweet.media[0].url : null,
+            color: getTweetColor(tweet),
+            mediaUrl: tweet.media.length > 0 ? tweet.media[0].url : null,
             tweet
           };
         });
@@ -1333,7 +1394,7 @@
         }
 
         drawBubbleCanvas();
-      }, [filteredTweets, dimensions, layout, scale, bubbleLayout, bubbleSpacing]);
+      }, [filteredTweets, dimensions, layout, scale, bubbleLayout, bubbleSpacing, colorPalette, colorMetric]);
 
       const renderTweetText = (tweet) => {
         let text = tweet.full_text;
@@ -1361,6 +1422,25 @@
         }
 
         return { __html: text };
+      };
+
+      const renderTweetMedia = (mediaItem, index) => {
+        const isVideo = mediaItem.type === 'video' || mediaItem.type === 'animated_gif';
+        const sourceUrl = getMediaUrl(mediaItem.playable_url || mediaItem.url);
+        if (isVideo && mediaItem.playable_url) {
+          return (
+            <video
+              key={index}
+              src={sourceUrl}
+              poster={getMediaUrl(mediaItem.url)}
+              controls
+              muted
+              playsInline
+              preload="metadata"
+            />
+          );
+        }
+        return <img key={index} src={getMediaUrl(mediaItem.url)} alt="Tweet media" loading="lazy" />;
       };
 
       const handleDateRangeChange = (e, type) => {
@@ -1434,7 +1514,7 @@
                 aria-hidden="true"
                 style={{
                   opacity: showMedia ? 1 : 0.72,
-                  backgroundColor: tweet.color
+                  backgroundColor: getTweetColor(tweet)
                 }}
               ></div>
             )}
@@ -1686,6 +1766,33 @@
             </div>
 
             <div className="panel-section">
+              <label className="panel-label">Bubble color</label>
+              <div className="panel-row">
+                <select
+                  value={colorPalette}
+                  onChange={(e) => updateStoredState(setColorPalette, 'colorPalette', e.target.value)}
+                  className="panel-control"
+                >
+                  <option value="viridis">Viridis</option>
+                  <option value="plasma">Plasma</option>
+                  <option value="inferno">Inferno</option>
+                  <option value="magma">Magma</option>
+                  <option value="cividis">Cividis</option>
+                  <option value="turbo">Turbo</option>
+                </select>
+                <select
+                  value={colorMetric}
+                  onChange={(e) => updateStoredState(setColorMetric, 'colorMetric', e.target.value)}
+                  className="panel-control"
+                >
+                  {Object.entries(COLOR_METRICS).map(([key, metric]) => (
+                    <option key={key} value={key}>{metric.label}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="panel-section">
               <label className="panel-label">Media filters</label>
               <div className="chip-row">
                 <label className="chip-toggle">
@@ -1821,7 +1928,7 @@
                     {(selectedTweet.media || []).length > 0 ? (
                       <div className="tweet-media-grid">
                         {(selectedTweet.media || []).map((m, i) => (
-                          <img key={i} src={getMediaUrl(m.url)} alt="Tweet media" />
+                          renderTweetMedia(m, i)
                         ))}
                       </div>
                     ) : (
