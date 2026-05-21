@@ -647,6 +647,8 @@
     const API_BASE_URL = window.location.port === '3000'
       ? 'http://localhost:8000'
       : window.location.origin;
+    const UI_CACHE_PREFIX = 'xplora:api:';
+    const UI_CACHE_TTL_MS = 10 * 60 * 1000;
 
     const getMediaUrl = (url) => {
       if (!url) return '';
@@ -654,6 +656,37 @@
         return `${API_BASE_URL}${url}`;
       }
       return url;
+    };
+
+    const getCachedPayload = (key) => {
+      try {
+        const rawValue = localStorage.getItem(`${UI_CACHE_PREFIX}${key}`);
+        if (!rawValue) return null;
+        const cached = JSON.parse(rawValue);
+        if (!cached.savedAt || Date.now() - cached.savedAt > UI_CACHE_TTL_MS) {
+          return null;
+        }
+        return cached;
+      } catch (err) {
+        return null;
+      }
+    };
+
+    const setCachedPayload = (key, data, etag) => {
+      try {
+        localStorage.setItem(`${UI_CACHE_PREFIX}${key}`, JSON.stringify({
+          data,
+          etag,
+          savedAt: Date.now()
+        }));
+      } catch (err) {
+        // Ignore quota errors; the app should still work without client caching.
+      }
+    };
+
+    const getTweetsCacheKey = (params) => {
+      const sortedEntries = Object.entries(params).sort(([left], [right]) => left.localeCompare(right));
+      return `tweets:${JSON.stringify(sortedEntries)}`;
     };
 
     const App = () => {
@@ -667,7 +700,7 @@
       const [uploadProgress, setUploadProgress] = useState(0);
       const [displayProgress, setDisplayProgress] = useState(0);
       const [error, setError] = useState('');
-      const [analysis, setAnalysis] = useState({ topics: [], sentiments: [], clusters: [], interests: [] });
+      const [analysis, setAnalysis] = useState({ topics: [], clusters: [], interests: [] });
       const [warmupStatus, setWarmupStatus] = useState({
         state: 'starting',
         message: 'Connecting to backend warmup',
@@ -800,7 +833,6 @@
 
           console.log("Backend response:", response.data);
           console.log("Tweets length:", response.data.tweets.length);
-          console.log("Sentiments length:", response.data.analysis.sentiments.length);
           const loadedTweets = response.data.tweets || [];
           setTweets(loadedTweets);
           setFilteredTweets(loadedTweets);
@@ -823,7 +855,7 @@
             console.log("No tweets loaded, initial date limits and range reset to null");
           }
 
-          setAnalysis(response.data.analysis || { topics: [], sentiments: [], clusters: [], interests: [] });
+          setAnalysis(response.data.analysis || { topics: [], clusters: [], interests: [] });
           setError('');
         } catch (err) {
           console.error("Upload error:", err);
@@ -844,11 +876,27 @@
           return;
         }
 
+        const detailCacheKey = `tweet:${tweet.id}`;
+        const cachedDetail = getCachedPayload(detailCacheKey);
+        if (cachedDetail?.data) {
+          setSelectedTweetLoading(false);
+          setSelectedTweet(cachedDetail.data);
+          return;
+        }
+
         setSelectedTweetLoading(true);
         setSelectedTweet(tweet);
         try {
-          const response = await axios.get(`${API_BASE_URL}/tweets/${tweet.id}`);
+          const response = await axios.get(`${API_BASE_URL}/tweets/${tweet.id}`, {
+            headers: cachedDetail?.etag ? { 'If-None-Match': cachedDetail.etag } : {},
+            validateStatus: (status) => (status >= 200 && status < 300) || status === 304
+          });
+          if (response.status === 304 && cachedDetail?.data) {
+            setSelectedTweet(cachedDetail.data);
+            return;
+          }
           setSelectedTweet(response.data);
+          setCachedPayload(detailCacheKey, response.data, response.headers.etag);
         } catch (err) {
           console.error("Error fetching tweet details:", err);
           setError('Error fetching tweet details: ' + (err.message || 'Unknown error'));
@@ -859,52 +907,42 @@
 
       // Fetch pre-processed tweets from the server
       const fetchTweets = async () => {
+        const params = {
+          query: query || '',
+          queryMode: queryMode,
+          interest: selectedInterest || '',
+          dateStart: dateRange.start || '',
+          dateEnd: dateRange.end || '',
+          showImages: showImages,
+          showVideos: showVideos,
+          showLinks: showLinks,
+          sortBy: sortBy,
+          sortOrder: sortOrder,
+        };
+        const cacheKey = getTweetsCacheKey(params);
+        const cached = getCachedPayload(cacheKey);
+        if (cached?.data?.startupStatus?.ready) {
+          applyTweetsResponse(cached.data, { fromCache: true });
+        }
+
         try {
           setLoading(true);
-          const params = {
-            query: query || '',
-            queryMode: queryMode,
-            interest: selectedInterest || '',
-            dateStart: dateRange.start || '',
-            dateEnd: dateRange.end || '',
-            showImages: showImages,
-            showVideos: showVideos,
-            showLinks: showLinks,
-            sortBy: sortBy,
-            sortOrder: sortOrder,
-          };
-          const response = await axios.get(`${API_BASE_URL}/tweets`, { params });
+          const response = await axios.get(`${API_BASE_URL}/tweets`, {
+            params,
+            headers: cached?.etag ? { 'If-None-Match': cached.etag } : {},
+            validateStatus: (status) => (status >= 200 && status < 300) || status === 304
+          });
+          if (response.status === 304 && cached?.data) {
+            applyTweetsResponse(cached.data);
+            return;
+          }
           console.log("Fetched tweets from server:", response.data);
-          if (response.data.startupStatus) {
+          if (!response.data.startupStatus?.ready && cached?.data?.startupStatus?.ready) {
             setWarmupStatus(response.data.startupStatus);
-            if (!response.data.startupStatus.ready) {
-              setTweets([]);
-              setFilteredTweets([]);
-              return;
-            }
+            return;
           }
-          
-          const loadedTweets = response.data.tweets || [];
-          setTweets(loadedTweets);
-          setFilteredTweets(loadedTweets);
-
-          if (loadedTweets.length > 0 && response.data.initialDateRange && !hasSetInitialDateLimits) {
-            const { minDate, maxDate } = response.data.initialDateRange;
-            setInitialDateLimits({ min: minDate, max: maxDate });
-            setHasSetInitialDateLimits(true);
-            const oneYearInMs = 366 * 24 * 60 * 60 * 1000;
-            const defaultStart = Math.max(minDate, maxDate - oneYearInMs);
-            setDateRange(prev => prev.start && prev.end ? prev : { start: defaultStart, end: maxDate });
-            setPendingDateRange(prev => prev.start && prev.end ? prev : { start: defaultStart, end: maxDate });
-            console.log("Initial date limits set:", { min: minDate, max: maxDate });
-            console.log("Date range initialized to last 366 days:", { start: defaultStart, end: maxDate });
-          } else if (!loadedTweets.length) {
-            setDateRange(prev => prev.start || prev.end ? { start: null, end: null } : prev);
-            setPendingDateRange(prev => prev.start || prev.end ? { start: null, end: null } : prev);
-            console.log("No tweets loaded, date range reset to null");
-          }
-
-          setAnalysis(response.data.analysis || { topics: [], sentiments: [], clusters: [], interests: [] });
+          applyTweetsResponse(response.data);
+          setCachedPayload(cacheKey, response.data, response.headers.etag);
           setError('');
         } catch (err) {
           console.error("Error fetching tweets:", err);
@@ -914,7 +952,41 @@
         }
       };
 
+      const applyTweetsResponse = (data, options = {}) => {
+        if (data.startupStatus) {
+          setWarmupStatus(data.startupStatus);
+          if (!data.startupStatus.ready && !options.fromCache) {
+            setTweets([]);
+            setFilteredTweets([]);
+            return;
+          }
+        }
+
+        const loadedTweets = data.tweets || [];
+        setTweets(loadedTweets);
+        setFilteredTweets(loadedTweets);
+
+        if (loadedTweets.length > 0 && data.initialDateRange && !hasSetInitialDateLimits) {
+          const { minDate, maxDate } = data.initialDateRange;
+          setInitialDateLimits({ min: minDate, max: maxDate });
+          setHasSetInitialDateLimits(true);
+          const oneYearInMs = 366 * 24 * 60 * 60 * 1000;
+          const defaultStart = Math.max(minDate, maxDate - oneYearInMs);
+          setDateRange(prev => prev.start && prev.end ? prev : { start: defaultStart, end: maxDate });
+          setPendingDateRange(prev => prev.start && prev.end ? prev : { start: defaultStart, end: maxDate });
+        } else if (!loadedTweets.length && !options.fromCache) {
+          setDateRange(prev => prev.start || prev.end ? { start: null, end: null } : prev);
+          setPendingDateRange(prev => prev.start || prev.end ? { start: null, end: null } : prev);
+        }
+
+        setAnalysis(data.analysis || { topics: [], clusters: [], interests: [] });
+      };
+
       useEffect(() => {
+        if (warmupStatus.ready) {
+          return undefined;
+        }
+
         let cancelled = false;
 
         const pollStartupStatus = async () => {
@@ -942,7 +1014,7 @@
         };
 
         pollStartupStatus();
-        const interval = setInterval(pollStartupStatus, warmupStatus.ready ? 5000 : 1000);
+        const interval = setInterval(pollStartupStatus, 1000);
 
         return () => {
           cancelled = true;
@@ -1000,7 +1072,7 @@
         nodes.forEach((node, index) => {
           ctx.beginPath();
           ctx.arc(node.x, node.y, node.r, 0, Math.PI * 2);
-          ctx.fillStyle = node.sentiment;
+          ctx.fillStyle = node.color;
           ctx.fill();
           ctx.lineWidth = 3 / transform.k;
           ctx.strokeStyle = '#000';
@@ -1166,7 +1238,7 @@
             x: 0,
             y: 0,
             r: (5 + sizeFactor * 30) * scale,
-            sentiment: tweet.sentiment,
+            color: tweet.color,
             media: tweet.media.length > 0 ? tweet.media[0].url : null,
             tweet
           };
@@ -1362,7 +1434,7 @@
                 aria-hidden="true"
                 style={{
                   opacity: showMedia ? 1 : 0.72,
-                  backgroundColor: tweet.sentiment
+                  backgroundColor: tweet.color
                 }}
               ></div>
             )}
@@ -1708,19 +1780,6 @@
                       <div className="tweet-meta-item">
                         <span className="tweet-meta-label">Retweets</span>
                         <span>{selectedTweet.retweet_count}</span>
-                      </div>
-                      <div className="tweet-meta-item">
-                        <span className="tweet-meta-label">Sentiment</span>
-                        <span
-                          style={{
-                            display: 'inline-block',
-                            width: '18px',
-                            height: '18px',
-                            backgroundColor: selectedTweet.sentiment,
-                            borderRadius: '999px',
-                            verticalAlign: 'middle'
-                          }}
-                        ></span>
                       </div>
                     </div>
                     {(selectedTweet.user_mentions || []).length > 0 && (

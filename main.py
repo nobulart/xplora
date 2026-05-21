@@ -1,18 +1,14 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 import asyncio
+from email.utils import parsedate_to_datetime
 import gzip
 import io
 import json
 import re
-import pandas as pd
-from transformers import pipeline
-import nltk
-from nltk.corpus import stopwords
 import uvicorn
-import chardet
 import os
 import logging
 import time
@@ -22,7 +18,7 @@ import urllib.request
 import zipfile
 
 # Set up logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=os.environ.get("XPLORA_LOG_LEVEL", "WARNING").upper())
 logger = logging.getLogger(__name__)
 
 app = FastAPI()
@@ -47,27 +43,24 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-try:
-    nltk.data.find("corpora/stopwords")
-except LookupError:
-    nltk.download('stopwords', quiet=True)
-stop_words = set(stopwords.words('english'))
-
-sentiment_analyzer = None
-
-# Store pre-processed tweets and analysis in memory
+# Store pre-processed tweets and indexes in memory
 pre_processed_tweets = []
 pre_processed_tweets_by_id = {}
 pre_processed_analysis = {
     "topics": [],
-    "sentiments": [],
     "clusters": [],
     "interests": []
 }
 pre_processed_date_range = {}
+pre_processed_cache_key = ""
 MEDIA_CACHE_DIR = os.path.join("tweets_media", "cache")
 PUBLIC_TWEETS_PATH = os.path.join("public", "tweets.js")
 COMPRESSED_PUBLIC_TWEETS_PATH = f"{PUBLIC_TWEETS_PATH}.gz"
+PROCESSED_CACHE_DIR = os.environ.get(
+    "XPLORA_CACHE_DIR",
+    os.path.join("/tmp", "xplora-cache"),
+)
+CACHE_CONTROL_HEADER = "public, max-age=31536000, immutable"
 BACKUP_MEDIA_DIRS = [
     os.path.join("twitter-backup", "data", "tweets_media"),
     os.path.join("twitter-backup", "data", "moments_tweets_media"),
@@ -88,6 +81,70 @@ startup_status = {
 def update_startup_status(**updates):
     startup_status.update(updates)
     startup_status["updatedAt"] = time.time()
+
+def stable_color(value):
+    """Return a deterministic accent color for a tweet id."""
+    palette = [
+        "#60a5fa",
+        "#34d399",
+        "#fbbf24",
+        "#f472b6",
+        "#a78bfa",
+        "#2dd4bf",
+        "#fb7185",
+        "#93c5fd",
+    ]
+    digest = hashlib.sha256(str(value).encode("utf-8")).digest()
+    return palette[digest[0] % len(palette)]
+
+def parse_tweet_timestamp(created_at):
+    return int(parsedate_to_datetime(created_at).timestamp() * 1000)
+
+def get_file_cache_key(path):
+    stat = os.stat(path)
+    return hashlib.sha256(
+        f"{path}:{stat.st_size}:{stat.st_mtime_ns}".encode("utf-8")
+    ).hexdigest()
+
+def get_content_cache_key(file_content):
+    return hashlib.sha256(file_content).hexdigest()
+
+def get_processed_cache_path(cache_key):
+    return os.path.join(PROCESSED_CACHE_DIR, f"{cache_key}.json")
+
+def load_processed_cache(cache_key):
+    cache_path = get_processed_cache_path(cache_key)
+    if not os.path.exists(cache_path):
+        return None
+
+    try:
+        with open(cache_path, "r", encoding="utf-8") as cache_file:
+            return json.load(cache_file)
+    except Exception as exc:
+        logger.warning("Failed to read processed cache %s: %s", cache_path, exc)
+        return None
+
+def save_processed_cache(cache_key, result):
+    try:
+        os.makedirs(PROCESSED_CACHE_DIR, exist_ok=True)
+        cache_path = get_processed_cache_path(cache_key)
+        with open(cache_path, "w", encoding="utf-8") as cache_file:
+            json.dump(result, cache_file, separators=(",", ":"))
+    except Exception as exc:
+        logger.warning("Failed to write processed cache: %s", exc)
+
+def set_cache_headers(response, etag):
+    response.headers["Cache-Control"] = "private, max-age=30, stale-while-revalidate=300"
+    response.headers["ETag"] = etag
+
+def not_modified_response(etag):
+    return Response(
+        status_code=304,
+        headers={
+            "Cache-Control": "private, max-age=30, stale-while-revalidate=300",
+            "ETag": etag,
+        },
+    )
 
 def ensure_compressed_tweets_copy():
     """Create or refresh public/tweets.js.gz when public/tweets.js changes."""
@@ -145,25 +202,11 @@ def extract_tweets_file_content(file_content, filename="tweets.js"):
 
     return file_content
 
-def get_sentiment_analyzer():
-    global sentiment_analyzer
-    if sentiment_analyzer is None:
-        sentiment_analyzer = pipeline(
-            "sentiment-analysis",
-            model="distilbert-base-uncased-finetuned-sst-2-english",
-            revision="714eb0f",
-        )
-    return sentiment_analyzer
-
-def preprocess_text(text):
-    text = re.sub(r'http\S+|@\S+|#\S+', '', text)
-    text = ' '.join(word for word in text.split() if word.lower() not in stop_words)
-    return text
-
 def extract_tweets(file_content):
-    result = chardet.detect(file_content)
-    encoding = result['encoding'] or 'utf-8'
-    content = file_content.decode(encoding)
+    try:
+        content = file_content.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        content = file_content.decode("latin-1")
 
     json_match = re.search(r'window\.YTD\.tweets\.part0\s*=\s*(\[.*\])(?:;)?', content, re.DOTALL)
     if not json_match:
@@ -215,68 +258,6 @@ def extract_tweets(file_content):
 
     return [tweet['tweet'] for tweet in tweets_data]
 
-def interpolate_color(color1, color2, factor):
-    """Interpolate between two colors (hex) based on a factor (0 to 1)."""
-    r1, g1, b1 = int(color1[1:3], 16), int(color1[3:5], 16), int(color1[5:7], 16)
-    r2, g2, b2 = int(color2[1:3], 16), int(color2[3:5], 16), int(color2[5:7], 16)
-    r = int(r1 + (r2 - r1) * factor)
-    g = int(g1 + (g2 - g1) * factor)
-    b = int(b1 + (b2 - b1) * factor)
-    return f"#{r:02x}{g:02x}{b:02x}"
-
-def perform_sentiment_analysis(texts, progress_callback=None):
-    sentiments = []
-    analyzer = get_sentiment_analyzer()
-    total = len(texts)
-    batch_size = 32
-
-    for batch_start in range(0, total, batch_size):
-        batch_texts = texts[batch_start:batch_start + batch_size]
-        non_empty_indexes = []
-        analyzer_inputs = []
-
-        for offset, text in enumerate(batch_texts):
-            if not text.strip():
-                sentiments.append('#9E9E9E')  # Neutral color (gray)
-            else:
-                sentiments.append(None)
-                non_empty_indexes.append(batch_start + offset)
-                analyzer_inputs.append(text[:512])
-
-        try:
-            results = analyzer(analyzer_inputs, batch_size=batch_size) if analyzer_inputs else []
-        except Exception:
-            results = []
-
-        for result_index, absolute_index in enumerate(non_empty_indexes):
-            try:
-                result = results[result_index]
-                label = result['label']  # 'POSITIVE' or 'NEGATIVE'
-                score = result['score']  # Confidence score (0 to 1)
-
-                if label == 'POSITIVE':
-                    sentiment_value = 0.5 + (score * 0.5)
-                    factor = (sentiment_value - 0.5) * 2
-                    color = interpolate_color('#9E9E9E', '#4CAF50', factor)
-                else:  # NEGATIVE
-                    sentiment_value = score * 0.5
-                    factor = sentiment_value * 2
-                    color = interpolate_color('#F44336', '#9E9E9E', factor)
-                sentiments[absolute_index] = color
-            except Exception:
-                sentiments[absolute_index] = '#9E9E9E'  # Neutral color (gray)
-
-        idx = min(batch_start + batch_size, total) - 1
-
-        if progress_callback and (idx == 0 or (idx + 1) % 25 == 0 or idx + 1 == total):
-            progress_callback(
-                "Analyzing sentiment",
-                25 + int(((idx + 1) / max(total, 1)) * 60),
-                idx + 1,
-                total,
-            )
-    return [sentiment or '#9E9E9E' for sentiment in sentiments]
-
 def make_text_preview(text, limit=180):
     """Return a compact single-line preview for list responses."""
     preview = re.sub(r'\s+', ' ', text).strip()
@@ -294,14 +275,13 @@ def build_tweet_summary(tweet):
         'favorite_count': tweet['favorite_count'],
         'retweet_count': tweet['retweet_count'],
         'media': tweet['media'][:1],
-        'sentiment': tweet['sentiment'],
+        'color': tweet['color'],
     }
 
 def build_analysis_summary():
     """Return analysis fields used by the list UI."""
     return {
         "topics": pre_processed_analysis.get("topics", []),
-        "sentiments": [],
         "clusters": pre_processed_analysis.get("clusters", []),
         "interests": pre_processed_analysis.get("interests", []),
     }
@@ -380,22 +360,16 @@ def process_tweets(file_content, progress_callback=None):
     tweets = extract_tweets(file_content)
     total = len(tweets)
     if progress_callback:
-        progress_callback("Preparing tweet text", 15, 0, total)
-    if progress_callback:
-        progress_callback("Loading sentiment model", 20, 0, total)
-    sentiments = perform_sentiment_analysis(
-        [tweet['full_text'] for tweet in tweets],
-        progress_callback=progress_callback,
-    )
+        progress_callback("Preparing visualization data", 25, 0, total)
     
     enriched_tweets = []
-    for idx, (tweet, sentiment) in enumerate(zip(tweets, sentiments)):
+    for idx, tweet in enumerate(tweets):
         interests = extract_interests(tweet)
         media = extract_media(tweet)
         full_text = tweet['full_text']
         user_mentions = tweet.get('entities', {}).get('user_mentions', [])
         hashtags = tweet.get('entities', {}).get('hashtags', [])
-        created_ts = int(pd.Timestamp(tweet['created_at']).timestamp() * 1000)
+        created_ts = parse_tweet_timestamp(tweet['created_at'])
         media_types = {item.get('type') for item in media}
         has_images = 'photo' in media_types
         has_videos = any(
@@ -418,7 +392,7 @@ def process_tweets(file_content, progress_callback=None):
             'user_mentions': user_mentions,
             'hashtags': hashtags,
             'media': media,
-            'sentiment': sentiment,
+            'color': stable_color(tweet['id']),
             'interests': interests,
             'search_text': full_text.lower(),
             'mention_search_text': ' '.join(
@@ -430,7 +404,12 @@ def process_tweets(file_content, progress_callback=None):
         })
 
         if progress_callback and (idx == 0 or (idx + 1) % 100 == 0 or idx + 1 == total):
-            progress_callback("Preparing visualization data", 85 + int(((idx + 1) / max(total, 1)) * 13), idx + 1, total)
+            progress_callback(
+                "Preparing visualization data",
+                25 + int(((idx + 1) / max(total, 1)) * 70),
+                idx + 1,
+                total,
+            )
     
     enriched_tweets.sort(key=lambda item: item['created_ts'], reverse=True)
     timestamps = [tweet['created_ts'] for tweet in enriched_tweets]
@@ -443,7 +422,6 @@ def process_tweets(file_content, progress_callback=None):
         } if timestamps else {},
         "analysis": {
             "topics": [],
-            "sentiments": sentiments,
             "clusters": [],
             "interests": sorted(set(
                 interest for tweet in enriched_tweets for interest in tweet['interests']
@@ -453,7 +431,7 @@ def process_tweets(file_content, progress_callback=None):
 
 def pre_process_tweets_sync():
     global pre_processed_tweets, pre_processed_tweets_by_id
-    global pre_processed_analysis, pre_processed_date_range
+    global pre_processed_analysis, pre_processed_date_range, pre_processed_cache_key
     compressed_refreshed = ensure_compressed_tweets_copy()
     if os.path.exists(PUBLIC_TWEETS_PATH) or os.path.exists(COMPRESSED_PUBLIC_TWEETS_PATH):
         source_path = (
@@ -475,9 +453,8 @@ def pre_process_tweets_sync():
             error=None,
         )
         logger.info("Loading %s from public directory", source_name)
-        with open(source_path, "rb") as f:
-            file_content = extract_tweets_file_content(f.read(), source_name)
-        logger.info("Processing tweets")
+        source_cache_key = get_file_cache_key(source_path)
+        cached_result = load_processed_cache(source_cache_key)
 
         def progress(message, percent, processed, total):
             update_startup_status(
@@ -490,13 +467,32 @@ def pre_process_tweets_sync():
                 error=None,
             )
 
-        result = process_tweets(file_content, progress_callback=progress)
+        if cached_result:
+            logger.info("Loading processed tweets from cache")
+            update_startup_status(
+                state="warming",
+                message="Loading processed tweet cache",
+                progress=75,
+                processed=0,
+                total=0,
+                ready=False,
+                error=None,
+            )
+            result = cached_result
+        else:
+            with open(source_path, "rb") as f:
+                file_content = extract_tweets_file_content(f.read(), source_name)
+            logger.info("Processing tweets")
+            result = process_tweets(file_content, progress_callback=progress)
+            save_processed_cache(source_cache_key, result)
+
         pre_processed_tweets = result["tweets"]
         pre_processed_tweets_by_id = {
             tweet['id']: tweet for tweet in pre_processed_tweets
         }
         pre_processed_analysis = result["analysis"]
         pre_processed_date_range = result["date_range"]
+        pre_processed_cache_key = source_cache_key
         update_startup_status(
             state="ready",
             message=f"Warmup complete: {len(pre_processed_tweets)} tweets loaded",
@@ -505,6 +501,7 @@ def pre_process_tweets_sync():
             total=len(pre_processed_tweets),
             ready=True,
             error=None,
+            cacheKey=pre_processed_cache_key,
         )
         logger.info("Tweets processing completed")
     else:
@@ -554,19 +551,31 @@ async def health_check():
 @app.get("/")
 async def root():
     """Serve the frontend shell from the API server."""
-    return FileResponse(os.path.join("public", "index.html"))
+    return FileResponse(
+        os.path.join("public", "index.html"),
+        headers={"Cache-Control": "no-cache"},
+    )
 
 @app.get("/output.css")
 async def output_css():
-    return FileResponse(os.path.join("public", "output.css"))
+    return FileResponse(
+        os.path.join("public", "output.css"),
+        headers={"Cache-Control": CACHE_CONTROL_HEADER},
+    )
 
 @app.get("/favicon.ico")
 async def favicon():
-    return FileResponse(os.path.join("public", "favicon.ico"))
+    return FileResponse(
+        os.path.join("public", "favicon.ico"),
+        headers={"Cache-Control": CACHE_CONTROL_HEADER},
+    )
 
 @app.get("/bmc-logo.svg")
 async def bmc_logo():
-    return FileResponse(os.path.join("public", "bmc-logo.svg"))
+    return FileResponse(
+        os.path.join("public", "bmc-logo.svg"),
+        headers={"Cache-Control": CACHE_CONTROL_HEADER},
+    )
 
 @app.get("/startup-status")
 async def get_startup_status():
@@ -575,10 +584,14 @@ async def get_startup_status():
 @app.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
     global pre_processed_tweets, pre_processed_tweets_by_id
-    global pre_processed_analysis, pre_processed_date_range
+    global pre_processed_analysis, pre_processed_date_range, pre_processed_cache_key
     try:
         content = extract_tweets_file_content(await file.read(), file.filename)
-        result = process_tweets(content)
+        upload_cache_key = get_content_cache_key(content)
+        result = load_processed_cache(upload_cache_key)
+        if result is None:
+            result = process_tweets(content)
+            save_processed_cache(upload_cache_key, result)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     pre_processed_tweets = result["tweets"]
@@ -587,6 +600,7 @@ async def upload_file(file: UploadFile = File(...)):
     }
     pre_processed_analysis = result["analysis"]
     pre_processed_date_range = result["date_range"]
+    pre_processed_cache_key = upload_cache_key
     update_startup_status(
         state="ready",
         message=f"Upload complete: {len(pre_processed_tweets)} tweets loaded",
@@ -595,6 +609,7 @@ async def upload_file(file: UploadFile = File(...)):
         total=len(pre_processed_tweets),
         ready=True,
         error=None,
+        cacheKey=pre_processed_cache_key,
     )
     return {
         "tweets": [build_tweet_summary(tweet) for tweet in pre_processed_tweets],
@@ -605,6 +620,8 @@ async def upload_file(file: UploadFile = File(...)):
 
 @app.get("/tweets")
 async def get_tweets(
+    request: Request,
+    response: Response,
     query: str = "",
     queryMode: str = "all",
     interest: str = "",
@@ -687,6 +704,27 @@ async def get_tweets(
     if sortBy != "date" or sortOrder == "asc":
         filtered_tweets = sorted(filtered_tweets, key=sort_key, reverse=reverse_sort)
 
+    etag = hashlib.sha256(json.dumps({
+        "cache": pre_processed_cache_key,
+        "query": query,
+        "queryMode": queryMode,
+        "interest": interest,
+        "dateStart": dateStart,
+        "dateEnd": dateEnd,
+        "showImages": showImages,
+        "showVideos": showVideos,
+        "showLinks": showLinks,
+        "showAll": showAll,
+        "sortBy": sortBy,
+        "sortOrder": sortOrder,
+        "status": startup_status.get("state"),
+        "updatedAt": startup_status.get("updatedAt"),
+    }, sort_keys=True).encode("utf-8")).hexdigest()
+    quoted_etag = f'"{etag}"'
+    if request.headers.get("if-none-match") == quoted_etag:
+        return not_modified_response(quoted_etag)
+
+    set_cache_headers(response, quoted_etag)
     return {
         "tweets": [build_tweet_summary(tweet) for tweet in filtered_tweets],
         "analysis": build_analysis_summary(),
@@ -695,11 +733,16 @@ async def get_tweets(
     }
 
 @app.get("/tweets/{tweet_id}")
-async def get_tweet(tweet_id: str):
+async def get_tweet(tweet_id: str, request: Request, response: Response):
     tweet = pre_processed_tweets_by_id.get(tweet_id)
     if tweet is None:
         raise HTTPException(status_code=404, detail="Tweet not found")
 
+    quoted_etag = f'"{pre_processed_cache_key}:{tweet_id}"'
+    if request.headers.get("if-none-match") == quoted_etag:
+        return not_modified_response(quoted_etag)
+
+    set_cache_headers(response, quoted_etag)
     return {
         key: value
         for key, value in tweet.items()

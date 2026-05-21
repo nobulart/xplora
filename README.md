@@ -15,6 +15,7 @@ or card grid.
 - Search, interest, date, media, and sort filters
 - Persisted UI preferences with `localStorage`
 - Larger tweet detail modal for desktop and UHD displays
+- Server-side processed archive caching and client-side API response caching
 - Optional local media resolution from `twitter-backup/data` or `tweets_media`
 
 ## Repository Data Policy
@@ -152,9 +153,22 @@ Common `/tweets` query parameters:
 - `sortBy`: `date`, `engagement`, `likes`, `retweets`
 - `sortOrder`: `asc` or `desc`
 
-## Notes
+## Performance Notes
 
-Sentiment analysis uses Hugging Face `transformers` and PyTorch. The Docker
-image includes NLTK stopwords, but model assets are downloaded on first use if
-they are not already available in the runtime cache. Startup warmup can take
-time for large archives.
+Xplora intentionally avoids heavyweight ML processing during startup. Archive
+warmup parses and enriches tweet metadata only, then stores processed results in
+`/tmp/xplora-cache` by default. The Docker image precomputes the bundled archive
+cache at build time under `/app/.cache/xplora`, so production containers can load
+ready-to-serve summaries immediately. API responses use ETags and browser-side
+`localStorage` caching so repeat UI loads can paint from cache while the server
+revalidates data in the background.
+
+Railway cost controls:
+
+- The image uses a small Python slim base and installs only FastAPI, Uvicorn,
+  multipart upload support, and their direct dependencies.
+- Uvicorn runs one worker, disables access logs, and defaults app logging to
+  warnings through `XPLORA_LOG_LEVEL=WARNING`.
+- The frontend stops polling `/startup-status` after warmup completes.
+- The bundled archive cache is prebuilt during Docker build, reducing cold-start
+  CPU on Railway.

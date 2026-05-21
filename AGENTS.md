@@ -4,7 +4,7 @@ This file provides guidelines for agentic coding agents working with this reposi
 
 ## Project Overview
 
-Xplora is a web application that allows users to explore and visualize their Twitter data backups. It provides interactive visualization with filtering capabilities and sentiment analysis.
+Xplora is a web application that allows users to explore and visualize their Twitter data backups. It provides interactive visualization with filtering and media exploration capabilities.
 
 ## Build/Lint/Test Commands
 
