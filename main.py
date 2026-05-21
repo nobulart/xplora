@@ -47,7 +47,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-nltk.download('stopwords')
+try:
+    nltk.data.find("corpora/stopwords")
+except LookupError:
+    nltk.download('stopwords', quiet=True)
 stop_words = set(stopwords.words('english'))
 
 sentiment_analyzer = None

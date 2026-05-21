@@ -107,6 +107,28 @@ docker push sunbear73/xplora:latest
 The image is designed to ship with `public/tweets.js.gz` and without raw archive
 or volatile user data.
 
+## Railway
+
+Railway deploys from the root `Dockerfile` and reads `railway.toml` for
+deployment settings. The container command listens on Railway's injected `PORT`
+environment variable, falling back to `8000` locally. The configured healthcheck
+path is `/health`, which returns HTTP 200 as soon as the FastAPI server is live;
+archive warmup continues in the background and can be watched at
+`/startup-status`.
+
+Deploy from a linked Railway project:
+
+```bash
+railway up
+```
+
+Recommended Railway settings:
+
+- Builder: Dockerfile
+- Healthcheck path: `/health`
+- Healthcheck timeout: 300 seconds or higher for slower cold starts
+- Public service port: Railway-managed `PORT`
+
 ## API
 
 - `GET /health`: service status and warmup state
