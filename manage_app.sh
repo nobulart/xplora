@@ -5,8 +5,10 @@
 
 # Configuration
 APP_DIR="/Users/craig/src/xplora"
-UVICORN_CMD="uvicorn main:app --host 0.0.0.0 --port 8000 --reload"
-SERVE_CMD="serve public -p 3000" # Updated to use -p instead of --port
+APP_PORT=8000
+FRONTEND_PORT=3000
+UVICORN_CMD=(uvicorn main:app --host 0.0.0.0 --port "$APP_PORT" --reload)
+FRONTEND_CMD=(python3 -m http.server "$FRONTEND_PORT" --directory public --bind 127.0.0.1)
 APP_PID_FILE="$APP_DIR/app.pid"
 SERVE_PID_FILE="$APP_DIR/serve.pid"
 APP_LOG_FILE="$APP_DIR/app.log"
@@ -18,12 +20,50 @@ cd "$APP_DIR" || {
   exit 1
 }
 
-# Function to check if serve is installed
-check_serve_installed() {
-  if ! command -v serve > /dev/null 2>&1; then
-    echo "Error: 'serve' is not installed. Please install it with 'npm install -g serve'."
+# Function to check whether required commands are available
+check_dependencies() {
+  if ! command -v uvicorn > /dev/null 2>&1; then
+    echo "Error: 'uvicorn' is not installed or not on PATH."
     exit 1
   fi
+
+  if ! command -v python3 > /dev/null 2>&1; then
+    echo "Error: 'python3' is not installed or not on PATH."
+    exit 1
+  fi
+
+  if ! command -v curl > /dev/null 2>&1; then
+    echo "Error: 'curl' is not installed or not on PATH."
+    exit 1
+  fi
+}
+
+get_port_pid() {
+  lsof -tiTCP:"$1" -sTCP:LISTEN 2>/dev/null | head -n 1
+}
+
+is_url_ready() {
+  curl -fsS "$1" > /dev/null 2>&1
+}
+
+wait_for_url() {
+  local url="$1"
+  local pid="$2"
+  local timeout="$3"
+
+  for ((i = 1; i <= timeout; i++)); do
+    if is_url_ready "$url"; then
+      return 0
+    fi
+
+    if ! ps -p "$pid" > /dev/null 2>&1; then
+      return 1
+    fi
+
+    sleep 1
+  done
+
+  return 1
 }
 
 # Function to check if the app server is running
@@ -60,25 +100,40 @@ check_serve_running() {
 
 # Function to start the app server
 start_app() {
+  check_dependencies
+
   if check_app_running; then
     echo "App server is already running with PID $(cat "$APP_PID_FILE")"
+    return 0
+  fi
+
+  EXISTING_PID=$(get_port_pid "$APP_PORT")
+  if [ -n "$EXISTING_PID" ]; then
+    if is_url_ready "http://127.0.0.1:$APP_PORT/health"; then
+      echo "$EXISTING_PID" > "$APP_PID_FILE"
+      echo "App server is already running with PID $EXISTING_PID"
+      echo "API accessible at http://127.0.0.1:$APP_PORT"
+      return 0
+    fi
+    echo "Error: Port $APP_PORT is already in use by PID $EXISTING_PID."
+    echo "Stop that process or run './manage_app.sh stop' if it belongs to Xplora."
     return 1
   fi
 
   echo "Starting the app server..."
   # Run the app server in the background, redirect output to log file
-  $UVICORN_CMD >> "$APP_LOG_FILE" 2>&1 &
+  nohup "${UVICORN_CMD[@]}" >> "$APP_LOG_FILE" 2>&1 &
   APP_PID=$!
   
-  # Wait a moment to see if the process starts successfully
-  sleep 2
-  if ps -p "$APP_PID" > /dev/null 2>&1; then
+  if wait_for_url "http://127.0.0.1:$APP_PORT/health" "$APP_PID" 180; then
     echo "$APP_PID" > "$APP_PID_FILE"
     echo "App server started successfully with PID $APP_PID"
     echo "App server logs are being written to $APP_LOG_FILE"
-    echo "API accessible at http://127.0.0.1:8000"
+    echo "API accessible at http://127.0.0.1:$APP_PORT"
   else
     echo "Error: Failed to start the app server. Check $APP_LOG_FILE for details."
+    kill "$APP_PID" 2>/dev/null
+    rm -f "$APP_PID_FILE"
     return 1
   fi
   return 0
@@ -86,28 +141,40 @@ start_app() {
 
 # Function to start the serve web server
 start_serve() {
-  # Check if serve is installed
-  check_serve_installed
+  check_dependencies
 
   if check_serve_running; then
     echo "Serve web server is already running with PID $(cat "$SERVE_PID_FILE")"
+    return 0
+  fi
+
+  EXISTING_PID=$(get_port_pid "$FRONTEND_PORT")
+  if [ -n "$EXISTING_PID" ]; then
+    if is_url_ready "http://127.0.0.1:$FRONTEND_PORT"; then
+      echo "$EXISTING_PID" > "$SERVE_PID_FILE"
+      echo "Serve web server is already running with PID $EXISTING_PID"
+      echo "Frontend accessible at http://127.0.0.1:$FRONTEND_PORT"
+      return 0
+    fi
+    echo "Error: Port $FRONTEND_PORT is already in use by PID $EXISTING_PID."
+    echo "Stop that process or run './manage_app.sh stop' if it belongs to Xplora."
     return 1
   fi
 
   echo "Starting the serve web server..."
   # Run the serve web server in the background, redirect output to log file
-  $SERVE_CMD >> "$SERVE_LOG_FILE" 2>&1 &
+  nohup "${FRONTEND_CMD[@]}" >> "$SERVE_LOG_FILE" 2>&1 &
   SERVE_PID=$!
   
-  # Wait a moment to see if the process starts successfully
-  sleep 2
-  if ps -p "$SERVE_PID" > /dev/null 2>&1; then
+  if wait_for_url "http://127.0.0.1:$FRONTEND_PORT" "$SERVE_PID" 15; then
     echo "$SERVE_PID" > "$SERVE_PID_FILE"
     echo "Serve web server started successfully with PID $SERVE_PID"
     echo "Serve web server logs are being written to $SERVE_LOG_FILE"
-    echo "Frontend accessible at http://127.0.0.1:3000"
+    echo "Frontend accessible at http://127.0.0.1:$FRONTEND_PORT"
   else
     echo "Error: Failed to start the serve web server. Check $SERVE_LOG_FILE for details."
+    kill "$SERVE_PID" 2>/dev/null
+    rm -f "$SERVE_PID_FILE"
     return 1
   fi
   return 0
@@ -186,13 +253,15 @@ start_all() {
   local app_status=0
   local serve_status=0
 
-  start_app
-  app_status=$?
   start_serve
   serve_status=$?
+  start_app
+  app_status=$?
 
   if [ $app_status -eq 0 ] && [ $serve_status -eq 0 ]; then
     echo "Both servers started successfully"
+    echo "Frontend is available first at http://127.0.0.1:$FRONTEND_PORT"
+    echo "Backend warmup progress is available at http://127.0.0.1:$APP_PORT/startup-status"
   else
     echo "One or both servers failed to start. Check logs for details."
     exit 1
@@ -239,7 +308,7 @@ check_status() {
   if check_app_running; then
     APP_PID=$(cat "$APP_PID_FILE")
     echo "App server is running with PID $APP_PID"
-    echo "API accessible at http://127.0.0.1:8000"
+    echo "API accessible at http://127.0.0.1:$APP_PORT"
     echo "App server logs are available at $APP_LOG_FILE"
   else
     echo "App server is not running"
@@ -248,7 +317,7 @@ check_status() {
   if check_serve_running; then
     SERVE_PID=$(cat "$SERVE_PID_FILE")
     echo "Serve web server is running with PID $SERVE_PID"
-    echo "Frontend accessible at http://127.0.0.1:3000"
+    echo "Frontend accessible at http://127.0.0.1:$FRONTEND_PORT"
     echo "Serve web server logs are available at $SERVE_LOG_FILE"
   else
     echo "Serve web server is not running"

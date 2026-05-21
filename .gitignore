@@ -8,3 +8,39 @@ app.log
 serve.log
 app.pid
 serve.pid
+
+# Local dependencies and build/cache output
+node_modules/
+.cache/
+.pytest_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
+dist/
+build/
+
+# Local runtime/generated data
+results/
+tweets_media/*
+!tweets_media/.gitkeep
+twitter-backup/
+twitter-*.zip
+xplora.zip
+*.log
+*.pid
+
+# Local/default archive source. Commit public/tweets.js.gz instead.
+public/tweets.js
+!public/tweets.js.gz
+
+# Local research/extraction scratch files
+all_urls_with_categories.json
+x_categorized.json
+x_research_urls.json
+extract_full_analysis.py
+extract_tweets.py
+extract_x_tweets.py
+simple_url_analysis.py
+Dockerfile.final
+start_app.sh
