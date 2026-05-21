@@ -60,6 +60,7 @@ PROCESSED_CACHE_DIR = os.environ.get(
     "XPLORA_CACHE_DIR",
     os.path.join("/tmp", "xplora-cache"),
 )
+PROCESSED_CACHE_VERSION = "2026-05-21-client-media-and-order-controls"
 CACHE_CONTROL_HEADER = "public, max-age=31536000, immutable"
 BACKUP_MEDIA_DIRS = [
     os.path.join("twitter-backup", "data", "tweets_media"),
@@ -103,11 +104,15 @@ def parse_tweet_timestamp(created_at):
 def get_file_cache_key(path):
     stat = os.stat(path)
     return hashlib.sha256(
-        f"{path}:{stat.st_size}:{stat.st_mtime_ns}".encode("utf-8")
+        f"{PROCESSED_CACHE_VERSION}:{path}:{stat.st_size}:{stat.st_mtime_ns}".encode("utf-8")
     ).hexdigest()
 
 def get_content_cache_key(file_content):
-    return hashlib.sha256(file_content).hexdigest()
+    digest = hashlib.sha256()
+    digest.update(PROCESSED_CACHE_VERSION.encode("utf-8"))
+    digest.update(b":")
+    digest.update(file_content)
+    return digest.hexdigest()
 
 def get_processed_cache_path(cache_key):
     return os.path.join(PROCESSED_CACHE_DIR, f"{cache_key}.json")
@@ -694,11 +699,21 @@ async def get_tweets(
                 filtered.append(tweet)
         filtered_tweets = filtered
 
+    def media_sort_value(tweet):
+        if tweet['has_videos']:
+            return 3
+        if tweet['has_images']:
+            return 2
+        if tweet['has_links']:
+            return 1
+        return 0
+
     sort_key_map = {
         "date": lambda tweet: tweet['created_ts'],
         "engagement": lambda tweet: tweet['favorite_count'] + tweet['retweet_count'],
         "likes": lambda tweet: tweet['favorite_count'],
         "retweets": lambda tweet: tweet['retweet_count'],
+        "media": media_sort_value,
     }
     sort_key = sort_key_map.get(sortBy, sort_key_map["date"])
     reverse_sort = sortOrder != "asc"

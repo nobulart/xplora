@@ -653,7 +653,7 @@
       cividis: ['#00204c', '#123570', '#3b496c', '#575d6d', '#707173', '#8a8678', '#a59c74', '#c3b369', '#e1cc55', '#ffea46'],
       turbo: ['#30123b', '#4145ab', '#4675ed', '#39a2fc', '#1bcfd4', '#24eca6', '#61fc6c', '#a4fc3b', '#d1e834', '#f3b32a', '#f36b21', '#c92303', '#7a0403']
     };
-    const COLOR_METRICS = {
+    const TWEET_METRICS = {
       engagement: { label: 'Engagement', getValue: (tweet) => (tweet.favorite_count || 0) + (tweet.retweet_count || 0), scale: 'log' },
       likes: { label: 'Likes', getValue: (tweet) => tweet.favorite_count || 0, scale: 'log' },
       retweets: { label: 'Retweets', getValue: (tweet) => tweet.retweet_count || 0, scale: 'log' },
@@ -666,6 +666,8 @@
         return 0;
       }, scale: 'linear' },
     };
+    const SORT_METRIC_KEYS = ['date', 'engagement', 'likes', 'retweets', 'media'];
+    const COLOR_METRIC_KEYS = ['sort', ...SORT_METRIC_KEYS];
     const API_BASE_URL = window.location.port === '3000'
       ? 'http://localhost:8000'
       : window.location.origin;
@@ -765,8 +767,9 @@
       const [sortOrder, setSortOrder] = useState(localStorage.getItem('sortOrder') || 'desc');
       const [bubbleLayout, setBubbleLayout] = useState(localStorage.getItem('bubbleLayout') || 'cloud');
       const [bubbleSpacing, setBubbleSpacing] = useState(parseFloat(localStorage.getItem('bubbleSpacing')) || 1.2);
+      const [canvasColor, setCanvasColor] = useState(localStorage.getItem('canvasColor') || '#111827');
       const [colorPalette, setColorPalette] = useState(localStorage.getItem('colorPalette') || 'viridis');
-      const [colorMetric, setColorMetric] = useState(localStorage.getItem('colorMetric') || 'engagement');
+      const [colorMetric, setColorMetric] = useState(localStorage.getItem('colorMetric') || 'sort');
       const [isPanelVisible, setIsPanelVisible] = useState(localStorage.getItem('isPanelVisible') !== 'false');
       const canvasRef = useRef(null);
       const bubbleNodesRef = useRef([]);
@@ -780,13 +783,14 @@
       const [hasSetInitialDateLimits, setHasSetInitialDateLimits] = useState(false);
       const [zoomLevel, setZoomLevel] = useState(1);
       const fileInputRef = useRef(null);
+      const effectiveColorMetric = colorMetric === 'sort' ? sortBy : colorMetric;
       const colorDomain = useMemo(() => {
-        const metric = COLOR_METRICS[colorMetric] || COLOR_METRICS.engagement;
+        const metric = TWEET_METRICS[effectiveColorMetric] || TWEET_METRICS.engagement;
         const values = filteredTweets.map(metric.getValue);
         const min = Math.min(...values, 0);
         const max = Math.max(...values, 1);
         return { min, max, metric };
-      }, [filteredTweets, colorMetric]);
+      }, [filteredTweets, effectiveColorMetric]);
 
       const getTweetColor = (tweet) => {
         const rawValue = colorDomain.metric.getValue(tweet);
@@ -1123,7 +1127,7 @@
 
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         ctx.clearRect(0, 0, width, height);
-        ctx.fillStyle = '#111827';
+        ctx.fillStyle = canvasColor;
         ctx.fillRect(0, 0, width, height);
 
         ctx.save();
@@ -1394,7 +1398,7 @@
         }
 
         drawBubbleCanvas();
-      }, [filteredTweets, dimensions, layout, scale, bubbleLayout, bubbleSpacing, colorPalette, colorMetric]);
+      }, [filteredTweets, dimensions, layout, scale, bubbleLayout, bubbleSpacing, canvasColor, colorPalette, colorMetric]);
 
       const renderTweetText = (tweet) => {
         let text = tweet.full_text;
@@ -1710,26 +1714,6 @@
               </div>
               <div className="panel-row">
                 <select
-                  value={sortBy}
-                  onChange={(e) => updateStoredState(setSortBy, 'sortBy', e.target.value)}
-                  className="panel-control"
-                >
-                  <option value="date">Sort by date</option>
-                  <option value="engagement">Sort by engagement</option>
-                  <option value="likes">Sort by likes</option>
-                  <option value="retweets">Sort by retweets</option>
-                </select>
-                <select
-                  value={sortOrder}
-                  onChange={(e) => updateStoredState(setSortOrder, 'sortOrder', e.target.value)}
-                  className="panel-control"
-                >
-                  <option value="desc">Descending</option>
-                  <option value="asc">Ascending</option>
-                </select>
-              </div>
-              <div className="panel-row">
-                <select
                   value={bubbleLayout}
                   onChange={(e) => updateStoredState(setBubbleLayout, 'bubbleLayout', e.target.value)}
                   className="panel-control"
@@ -1763,11 +1747,62 @@
                 onChange={handleScaleChange}
                 className="panel-control"
               />
+              <label className="panel-label" style={{ marginTop: '10px' }}>Canvas</label>
+              <div className="panel-row">
+                <input
+                  type="color"
+                  value={canvasColor}
+                  onInput={(e) => updateStoredState(setCanvasColor, 'canvasColor', e.target.value)}
+                  onChange={(e) => updateStoredState(setCanvasColor, 'canvasColor', e.target.value)}
+                  className="panel-control"
+                  disabled={layout !== 'bubble'}
+                  title="Canvas color"
+                  aria-label="Canvas color"
+                />
+                <input
+                  type="text"
+                  value={canvasColor}
+                  readOnly
+                  className="panel-control"
+                  disabled={layout !== 'bubble'}
+                  aria-label="Canvas color value"
+                />
+              </div>
             </div>
 
             <div className="panel-section">
-              <label className="panel-label">Bubble color</label>
+              <label className="panel-label">Order & color</label>
               <div className="panel-row">
+                <select
+                  value={sortBy}
+                  onChange={(e) => updateStoredState(setSortBy, 'sortBy', e.target.value)}
+                  className="panel-control"
+                >
+                  {SORT_METRIC_KEYS.map((key) => (
+                    <option key={key} value={key}>{TWEET_METRICS[key].label}</option>
+                  ))}
+                </select>
+                <select
+                  value={sortOrder}
+                  onChange={(e) => updateStoredState(setSortOrder, 'sortOrder', e.target.value)}
+                  className="panel-control"
+                >
+                  <option value="desc">{sortBy === 'date' ? 'Newest first' : 'Highest first'}</option>
+                  <option value="asc">{sortBy === 'date' ? 'Oldest first' : 'Lowest first'}</option>
+                </select>
+              </div>
+              <div className="panel-row">
+                <select
+                  value={colorMetric}
+                  onChange={(e) => updateStoredState(setColorMetric, 'colorMetric', e.target.value)}
+                  className="panel-control"
+                >
+                  {COLOR_METRIC_KEYS.map((key) => (
+                    <option key={key} value={key}>
+                      {key === 'sort' ? 'Color follows order' : `Color by ${TWEET_METRICS[key].label.toLowerCase()}`}
+                    </option>
+                  ))}
+                </select>
                 <select
                   value={colorPalette}
                   onChange={(e) => updateStoredState(setColorPalette, 'colorPalette', e.target.value)}
@@ -1779,15 +1814,6 @@
                   <option value="magma">Magma</option>
                   <option value="cividis">Cividis</option>
                   <option value="turbo">Turbo</option>
-                </select>
-                <select
-                  value={colorMetric}
-                  onChange={(e) => updateStoredState(setColorMetric, 'colorMetric', e.target.value)}
-                  className="panel-control"
-                >
-                  {Object.entries(COLOR_METRICS).map(([key, metric]) => (
-                    <option key={key} value={key}>{metric.label}</option>
-                  ))}
                 </select>
               </div>
             </div>

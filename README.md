@@ -13,8 +13,9 @@ or card grid.
   `tweets.js`
 - Bubble, radial cloud, timeline, and card views
 - Search, interest, date, media, and sort filters
-- Scientific palette controls for coloring bubbles by engagement, likes,
-  retweets, date, or media type
+- Consolidated order and scientific palette controls for sorting and coloring
+  bubbles by date, engagement, likes, retweets, or media type
+- Persisted canvas color picker for the bubble view
 - Persisted UI preferences with `localStorage`
 - Larger tweet detail modal for desktop and UHD displays
 - Server-side processed archive caching and client-side API response caching
