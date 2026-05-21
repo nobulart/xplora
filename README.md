@@ -1,5 +1,7 @@
 # Xplora
 
+Current release: **V1.1**
+
 Xplora is a compact web app for exploring an X/Twitter archive. It loads a
 default compressed `tweets.js` archive from `public/tweets.js.gz`, processes it
 with a FastAPI backend, and presents the results as an interactive bubble cloud
@@ -155,8 +157,18 @@ Common `/tweets` query parameters:
 - `showImages`
 - `showVideos`
 - `showLinks`
-- `sortBy`: `date`, `engagement`, `likes`, `retweets`
+- `sortBy`: `date`, `engagement`, `likes`, `retweets`, `media`
 - `sortOrder`: `asc` or `desc`
+
+## Release Notes
+
+### V1.1
+
+- Consolidated ordering and bubble coloring controls into a single panel section.
+- Added scientific palette controls, media-type ordering, and a persisted canvas
+  color picker for the bubble view.
+- Moved default media retrieval to the browser where possible to reduce server
+  egress and improve perceived startup responsiveness.
 
 ## Performance Notes
 

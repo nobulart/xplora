@@ -782,7 +782,7 @@ async def media_cache(url: str):
         try:
             request = urllib.request.Request(
                 url,
-                headers={"User-Agent": "Xplora/1.0"},
+                headers={"User-Agent": "Xplora/1.1"},
             )
             with urllib.request.urlopen(request, timeout=10) as response:
                 content = response.read()
